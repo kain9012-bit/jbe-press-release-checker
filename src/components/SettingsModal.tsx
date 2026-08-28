@@ -45,7 +45,7 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
             </label>
             <select
               id="provider"
-              className="w-full rounded-md border border-slate-300 px-3 py-2"
+              className="w-full h-11 px-3 rounded-md border border-slate-300 bg-white text-sm font-semibold text-slate-800"
               value={cfg.provider}
               onChange={(e) => {
                 const p = e.target.value as Provider;
@@ -68,7 +68,7 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
               id="apikey"
               type="password"
               autoComplete="off"
-              className="w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-sm"
+              className="w-full h-11 px-3 rounded-md border border-slate-300 bg-white font-mono text-sm text-slate-800 outline-none focus:border-blue-600"
               placeholder={KEY_HELP[cfg.provider]}
               value={cfg.apiKey}
               onChange={(e) => setCfg({ ...cfg, apiKey: e.target.value })}
@@ -83,7 +83,7 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
             <input
               id="model"
               type="text"
-              className="w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-sm"
+              className="w-full h-11 px-3 rounded-md border border-slate-300 bg-white font-mono text-sm text-slate-800 outline-none focus:border-blue-600"
               value={cfg.model}
               onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
             />

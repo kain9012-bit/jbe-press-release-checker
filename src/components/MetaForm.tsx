@@ -8,7 +8,10 @@ interface Props {
 }
 
 const L = 'mb-1 block text-sm font-bold text-slate-700';
-const I = 'w-full rounded-md border border-slate-300 px-3 py-2 text-sm';
+const I =
+  'w-full h-11 px-3 rounded-md border border-slate-300 bg-white text-sm font-semibold text-slate-800 outline-none focus:border-blue-600';
+const TA =
+  'w-full px-3 py-2 rounded-md border border-slate-300 bg-white text-sm font-semibold text-slate-800 outline-none focus:border-blue-600';
 
 export default function MetaForm({ value, onChange, lockTitle }: Props) {
   const set = (k: keyof ReleaseMeta, v: string | string[]) => onChange({ ...value, [k]: v });
@@ -87,7 +90,7 @@ export default function MetaForm({ value, onChange, lockTitle }: Props) {
             <textarea
               id="m-sub"
               rows={2}
-              className={I}
+              className={TA}
               value={value.부제.join('\n')}
               onChange={(e) => set('부제', e.target.value.split('\n'))}
             />

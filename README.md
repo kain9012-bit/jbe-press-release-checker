@@ -84,7 +84,7 @@ npm run lint     # 타입 검사
 
 ## 배포
 
-`.github/workflows/deploy.yml` 이 `main` 에 push 될 때마다 빌드해서 GitHub Pages 에 올립니다.
+`.github/workflows/pages.yml` 이 `main` 에 push 될 때마다 빌드해서 GitHub Pages 에 올립니다.
 처음 한 번만 아래를 하면 됩니다.
 
 ```bash
