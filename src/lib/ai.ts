@@ -8,10 +8,15 @@ export interface AiConfig {
   model: string;
 }
 
+/**
+ * 처음 값일 뿐이다. 모형 이름은 회사 사정으로 수시로 사라진다
+ * (실제로 gemini-2.5-flash 가 신규 사용자에게 막혔다).
+ * 그래서 설정 화면에서 `listModels()` 로 실제 쓸 수 있는 목록을 받아 고르게 한다.
+ */
 export const DEFAULT_MODEL: Record<Provider, string> = {
   anthropic: 'claude-sonnet-4-5-20250929',
   openai: 'gpt-4o-mini',
-  gemini: 'gemini-2.5-flash',
+  gemini: 'gemini-3.6-flash',
 };
 
 export const PROVIDER_LABEL: Record<Provider, string> = {
@@ -187,4 +192,51 @@ export async function reviewWithAi(
   }
 
   return { findings, summary: String(parsed.summary ?? '').trim(), dropped };
+}
+
+/* ------------------------------------------------------------------ */
+/* 쓸 수 있는 모형 목록                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 넣어 둔 키로 그 회사에 물어 실제 쓸 수 있는 모형 이름을 받아 온다.
+ * 이름을 코드에 박아 두면 반드시 낡는다. 목록은 키를 넣은 사람만 볼 수 있다.
+ */
+export async function listModels(cfg: AiConfig): Promise<string[]> {
+  if (!cfg.apiKey.trim()) throw new Error('먼저 API 키를 넣어 주세요.');
+
+  if (cfg.provider === 'gemini') {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(cfg.apiKey)}&pageSize=200`,
+    );
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const data = await res.json();
+    return (data.models ?? [])
+      .filter((m: { supportedGenerationMethods?: string[] }) =>
+        (m.supportedGenerationMethods ?? []).includes('generateContent'),
+      )
+      .map((m: { name: string }) => m.name.replace(/^models\//, ''));
+  }
+
+  if (cfg.provider === 'openai') {
+    const res = await fetch('https://api.openai.com/v1/models', {
+      headers: { authorization: `Bearer ${cfg.apiKey}` },
+    });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const data = await res.json();
+    return (data.data ?? [])
+      .map((m: { id: string }) => m.id)
+      .filter((id: string) => /^(gpt|o\d|chatgpt)/i.test(id));
+  }
+
+  const res = await fetch('https://api.anthropic.com/v1/models?limit=100', {
+    headers: {
+      'x-api-key': cfg.apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+  });
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  const data = await res.json();
+  return (data.data ?? []).map((m: { id: string }) => m.id);
 }

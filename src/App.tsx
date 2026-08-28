@@ -30,6 +30,7 @@ import {
   buildRevised,
   defaultDecisions,
   isApplicable,
+  replacementFor,
   DATA_COUNTS,
   type AnalyzeResult,
   type Decision,
@@ -644,6 +645,7 @@ export default function App() {
                     {shown.map((f) => {
                       const d = decisions[f.key] ?? { on: false, pick: 0 };
                       const can = isApplicable(f.fixes[d.pick] ?? '');
+                      const rep = replacementFor(f, d);
                       return (
                         <li
                           key={f.key}
@@ -686,21 +688,58 @@ export default function App() {
                             </div>
                           )}
 
+                          {/*
+                            대안이 지시문이거나 앞말에 따라 달라지는 경우에는 기계가 고를 수
+                            없다. 그럴 때는 손으로 적어 넣게 하고, 적으면 그것을 수정본에 쓴다.
+                          */}
+                          {!can && (
+                            <div className="mt-3">
+                              <label
+                                htmlFor={`fix-${f.key}`}
+                                className="block text-xs font-bold text-slate-500"
+                              >
+                                고쳐 넣을 말을 직접 적으세요
+                              </label>
+                              <input
+                                id={`fix-${f.key}`}
+                                type="text"
+                                value={d.custom ?? ''}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setDecisions((s) => ({
+                                    ...s,
+                                    [f.key]: { ...d, custom: v, on: v.trim().length > 0 },
+                                  }));
+                                }}
+                                placeholder={`‘${f.text}’ 자리에 넣을 말`}
+                                className="mt-1 w-full h-9 px-2.5 rounded-md border border-slate-300 bg-white
+                                           text-sm font-semibold text-slate-800 outline-none focus:border-blue-600"
+                              />
+                            </div>
+                          )}
+
                           <label
                             className={`mt-3 flex items-center gap-2 text-sm ${
-                              can ? 'text-slate-700' : 'text-slate-400'
+                              rep ? 'text-slate-700' : 'text-slate-400'
                             }`}
                           >
                             <input
                               type="checkbox"
-                              disabled={!can}
-                              checked={d.on && can}
+                              disabled={!rep}
+                              checked={Boolean(d.on && rep)}
                               onChange={(e) =>
                                 setDecisions((s) => ({ ...s, [f.key]: { ...d, on: e.target.checked } }))
                               }
                               className="w-4 h-4"
                             />
-                            {can ? '수정본에 반영' : '자동 반영 불가 — 직접 고쳐야 합니다'}
+                            {rep ? (
+                              <span>
+                                수정본에 <b className="text-slate-900">{rep}</b> 넣기
+                              </span>
+                            ) : (
+                              '적어 넣으면 수정본에 반영됩니다'
+                            )}
                           </label>
                         </li>
                       );

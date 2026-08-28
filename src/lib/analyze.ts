@@ -426,6 +426,14 @@ export interface Decision {
   on: boolean;
   /** 고른 대안의 번호 */
   pick: number;
+  /**
+   * 사람이 직접 적어 넣은 말.
+   *
+   * 대안이 ‘한글로 먼저 적고 괄호 안에 넣기’ 처럼 지시문이거나 ‘(으)로 / ~하여’ 처럼
+   * 앞말에 따라 달라지는 경우, 기계가 고를 수 없으니 여기에 적은 것을 그대로 쓴다.
+   * 비어 있지 않으면 자동 대안보다 우선한다.
+   */
+  custom?: string;
 }
 
 /** 대안 문자열에서 실제로 갈아 끼울 말만 뽑는다. ‘A / B’, ‘A(설명)’ 같은 꼴 처리 */
@@ -443,23 +451,29 @@ export function isApplicable(fix: string) {
   return true;
 }
 
+/** 이 지적을 수정본에 넣는다면 어떤 말이 들어갈지. 넣을 수 없으면 null */
+export function replacementFor(f: Finding, d: Decision | undefined): string | null {
+  if (!d) return null;
+  const custom = (d.custom ?? '').trim();
+  if (custom) return custom;
+  const fix = f.fixes[d.pick] ?? '';
+  return isApplicable(fix) ? pickText(fix) : null;
+}
+
 export function buildRevised(
   text: string,
   findings: Finding[],
   decisions: Record<string, Decision>,
 ) {
   const applied = findings
-    .filter((f) => {
-      const d = decisions[f.key];
-      if (!d || !d.on) return false;
-      return isApplicable(f.fixes[d.pick] ?? '');
-    })
+    .filter((f) => decisions[f.key]?.on && replacementFor(f, decisions[f.key]) !== null)
     .sort((a, b) => b.start - a.start);
 
   let out = text;
   for (const f of applied) {
-    const d = decisions[f.key];
-    out = out.slice(0, f.start) + pickText(f.fixes[d.pick]) + out.slice(f.end);
+    const rep = replacementFor(f, decisions[f.key]);
+    if (rep === null) continue;
+    out = out.slice(0, f.start) + rep + out.slice(f.end);
   }
   return out;
 }
