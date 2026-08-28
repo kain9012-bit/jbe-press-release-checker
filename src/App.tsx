@@ -1,24 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
+  ArrowUp,
   Check,
   ClipboardCheck,
   Copy,
   Download,
   FileDown,
-  FileText,
   FileUp,
+  Languages,
   Loader2,
   RotateCcw,
-  Settings,
+  ScrollText,
+  SpellCheck,
   Sparkles,
+  MessagesSquare,
 } from 'lucide-react';
+import { Header, type Tab } from './components/Header';
 import Highlight from './components/Highlight';
 import SettingsModal from './components/SettingsModal';
 import CriteriaView from './components/CriteriaView';
 import CasesView from './components/CasesView';
 import MetaForm from './components/MetaForm';
+import { Badge, SectionTitle, Stat, Notice, BTN_PRIMARY, BTN_GHOST, CARD, type Tone } from './components/Ui';
 import { CHECKLIST } from './data/checklist';
 import {
   analyze,
@@ -35,14 +40,14 @@ import { parsePressRelease } from './lib/hwp';
 import { buildHwpx, defaultFileName, EMPTY_META, type ReleaseMeta } from './lib/hwpxOut';
 import { composeSource, decompose, splitPastedText, type Doc } from './lib/doc';
 
-type Tab = '검토' | '기준' | '사례';
-const TABS: Tab[] = ['검토', '기준', '사례'];
 const AXES = ['용이성', '정확성', '소통성'] as const;
+type Axis = (typeof AXES)[number];
 
-const AXIS_TONE: Record<string, { chip: string; bar: string; text: string }> = {
-  용이성: { chip: 'bg-blue-50 text-blue-700 border-blue-200', bar: 'bg-blue-600', text: 'text-blue-700' },
-  정확성: { chip: 'bg-red-50 text-red-700 border-red-200', bar: 'bg-red-500', text: 'text-red-700' },
-  소통성: { chip: 'bg-amber-50 text-amber-800 border-amber-200', bar: 'bg-amber-500', text: 'text-amber-800' },
+const AXIS_TONE: Record<Axis, Tone> = { 용이성: 'blue', 정확성: 'red', 소통성: 'amber' };
+const AXIS_ICON: Record<Axis, React.ReactNode> = {
+  용이성: <Languages className="w-3.5 h-3.5" aria-hidden="true" />,
+  정확성: <SpellCheck className="w-3.5 h-3.5" aria-hidden="true" />,
+  소통성: <MessagesSquare className="w-3.5 h-3.5" aria-hidden="true" />,
 };
 
 const CFG_KEY = 'prc.ai.config.v1';
@@ -58,7 +63,7 @@ function loadCfg(): AiConfig {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('검토');
+  const [tab, setTab] = useState<Tab>('check');
   const [inputMode, setInputMode] = useState<'text' | 'file'>('text');
   const [text, setText] = useState('');
   const [meta, setMeta] = useState<ReleaseMeta>(EMPTY_META);
@@ -76,7 +81,7 @@ export default function App() {
   const [aiError, setAiError] = useState('');
   const [cfg, setCfg] = useState<AiConfig>(loadCfg);
   const [showCfg, setShowCfg] = useState(false);
-  const [filter, setFilter] = useState<'전체' | (typeof AXES)[number]>('전체');
+  const [filter, setFilter] = useState<'전체' | Axis>('전체');
   const [active, setActive] = useState<string | null>(null);
   const [copied, setCopied] = useState('');
   const [exportError, setExportError] = useState('');
@@ -90,6 +95,10 @@ export default function App() {
     }
   }, [cfg]);
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }, [tab]);
+
   const findings = useMemo(
     () => [...(result?.findings ?? []), ...aiFindings].sort((a, b) => a.start - b.start),
     [result, aiFindings],
@@ -102,19 +111,26 @@ export default function App() {
     () => (result ? buildRevised(source, findings, decisions) : ''),
     [result, source, findings, decisions],
   );
+
+  /* 머리말(배포일·부서·담당자)은 검사 대상이 아니므로 폼 값을 그대로 얹는다 */
+  const headerOnly = (m: ReleaseMeta) => ({
+    배포일: m.배포일,
+    보도시점: m.보도시점,
+    사진: m.사진,
+    영상: m.영상,
+    부서: m.부서,
+    과장: m.과장,
+    담당: m.담당,
+    장학사: m.장학사,
+  });
+
   /** 수정본을 제목·부제·본문으로 되돌린 것 */
   const revisedDoc = useMemo(() => {
     if (!baseDoc) return null;
     const d = decompose(revised, baseDoc);
     if (!d) return null;
-    return { meta: { ...d.meta, ...pickHeaderOnly(meta) }, body: d.body };
+    return { meta: { ...d.meta, ...headerOnly(meta) }, body: d.body };
   }, [revised, baseDoc, meta]);
-
-  /* 머리말(배포일·부서·담당자)은 결과 화면에서 고쳐도 검사 대상이 아니므로 그대로 얹는다 */
-  function pickHeaderOnly(m: ReleaseMeta) {
-    const { 배포일, 보도시점, 사진, 영상, 부서, 과장, 담당, 장학사 } = m;
-    return { 배포일, 보도시점, 사진, 영상, 부서, 과장, 담당, 장학사 };
-  }
 
   /* ---------------- 파일 읽기 ---------------- */
 
@@ -242,11 +258,16 @@ export default function App() {
 
   function downloadHwpx() {
     setExportError('');
-    const d = revisedDoc ?? (baseDoc ? { meta: { ...baseDoc.meta, ...pickHeaderOnly(meta) }, body: baseDoc.body } : null);
+    const d =
+      revisedDoc ??
+      (baseDoc ? { meta: { ...baseDoc.meta, ...headerOnly(meta) }, body: baseDoc.body } : null);
     if (!d) return;
     try {
       const bytes = buildHwpx(d.meta, d.body);
-      saveBlob(defaultFileName(d.meta), new Blob([bytes as unknown as BlobPart], { type: 'application/hwp+zip' }));
+      saveBlob(
+        defaultFileName(d.meta),
+        new Blob([bytes as unknown as BlobPart], { type: 'application/hwp+zip' }),
+      );
     } catch (e) {
       setExportError(e instanceof Error ? e.message : String(e));
     }
@@ -291,249 +312,248 @@ export default function App() {
     return lines.join('\n');
   }, [checklist, findings, result, meta.제목]);
 
-  const btnGhost =
-    'flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50';
+  const readyToRun = inputMode === 'file' ? body.length > 0 : text.trim().length > 0;
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <a href="#main" className="krds-skip">
+    <div className="min-h-screen overflow-x-clip bg-white text-slate-800 font-sans antialiased flex flex-col selection:bg-blue-600 selection:text-white">
+      <a href="#container" className="krds-skip">
         본문 바로가기
       </a>
 
-      <div className="bg-slate-800 text-center text-xs text-slate-200">
-        <div className="mx-auto max-w-7xl px-4 py-1.5 sm:px-6 lg:px-8">
-          이 도구는 공식 평가 시스템이 아닙니다. 국립국어원이 공개한 기준을 옮겨 담은 자가검증용 보조
-          도구이며, 최종 판단은 작성자와 대변인실이 합니다.
-        </div>
-      </div>
+      <Header
+        activeTab={tab}
+        setActiveTab={setTab}
+        onOpenSettings={() => setShowCfg(true)}
+        dataAsOf="2026. 8."
+      />
 
-      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-          <button
-            type="button"
-            onClick={() => setTab('검토')}
-            className="flex shrink-0 items-center gap-2 py-3.5 text-left"
-          >
-            <FileText className="h-5 w-5 text-blue-600" aria-hidden />
-            <span className="text-lg font-bold tracking-tight">보도자료 공공언어 자가검증</span>
-          </button>
-          <nav className="no-scrollbar flex items-center gap-1 overflow-x-auto" aria-label="주요 메뉴">
-            {TABS.map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setTab(t)}
-                className={`shrink-0 border-b-[3px] px-3 py-3.5 text-sm font-bold ${
-                  tab === t
-                    ? 'border-blue-600 text-blue-700'
-                    : 'border-transparent text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={() => setShowCfg(true)}
-              className="ml-1 shrink-0 rounded-md p-2 text-slate-600 hover:bg-slate-100"
-              aria-label="AI 검토 설정"
-            >
-              <Settings className="h-5 w-5" aria-hidden />
-            </button>
-          </nav>
-        </div>
-      </header>
-
-      <main id="main" className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        {tab === '기준' && <CriteriaView />}
-        {tab === '사례' && <CasesView />}
+      <main id="container" className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {tab === 'criteria' && <CriteriaView />}
+        {tab === 'cases' && <CasesView />}
 
         {/* ------------------ 입력 화면 ------------------ */}
-        {tab === '검토' && !result && (
-          <div className="mx-auto max-w-3xl">
-            <h1 className="text-3xl font-bold tracking-tight text-slate-900">
-              보도자료 초안을 넣으면 고칠 곳을 짚어 드립니다
-            </h1>
-            <p className="mt-3 text-slate-600">
-              글을 붙여 넣어도 되고 쓰던 한글 파일(.hwp, .hwpx)을 올려도 됩니다. 어느 쪽이든 결과는
-              전북교육청 보도자료 양식이 적용된 <b>hwpx 파일</b>로 받습니다. 원고는 브라우저 안에서만
-              처리되고 어디로도 올라가지 않습니다.
-            </p>
-
-            <div className="mt-6 rounded-lg border border-slate-200 bg-white p-5">
-              <div className="mb-4 flex gap-1.5">
-                {(
-                  [
-                    ['text', '글 붙여넣기'],
-                    ['file', '한글 파일 올리기'],
-                  ] as const
-                ).map(([k, label]) => (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => setInputMode(k)}
-                    className={`rounded-full border px-4 py-1.5 text-sm ${
-                      inputMode === k
-                        ? 'border-blue-600 bg-blue-600 font-bold text-white'
-                        : 'border-slate-300 bg-white text-slate-700 hover:border-blue-600'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              {inputMode === 'text' ? (
-                <>
-                  <label htmlFor="draft" className="mb-2 block font-bold">
-                    보도자료 초안
-                  </label>
-                  <p className="mb-2 text-sm text-slate-500">
-                    첫 줄을 제목으로, 나머지 줄을 본문 문단으로 봅니다. 아래 정보 칸에서 고칠 수 있습니다.
+        {tab === 'check' && !result && (
+          <div className="space-y-8 pb-12">
+            {/* ── 입력 띠 ── */}
+            <section
+              className="relative left-1/2 w-screen -translate-x-1/2 -mt-6
+                         px-4 sm:px-6 lg:px-8 py-10 sm:py-14
+                         bg-blue-50 border-b border-blue-100"
+            >
+              <div className="max-w-4xl mx-auto space-y-6">
+                <div className="text-center space-y-3">
+                  <h2 className="text-3xl sm:text-[2.75rem] font-bold text-slate-900 leading-tight">
+                    <span className="block sm:inline">보도자료를 내기 전에</span>{' '}
+                    <span className="text-blue-700">공공언어부터 봅니다</span>
+                  </h2>
+                  <p className="text-base sm:text-lg text-slate-600">
+                    글을 붙여 넣거나 쓰던 한글 파일을 올리면{' '}
+                    <strong className="font-bold text-slate-900">고칠 곳</strong> ·
+                    <strong className="font-bold text-slate-900"> 수정본</strong> ·
+                    <strong className="font-bold text-slate-900"> 점검표</strong>를 만들고,
+                    전북교육청 양식 hwpx로 돌려드립니다
                   </p>
-                  <textarea
-                    id="draft"
-                    value={text}
-                    onChange={(e) => setText(e.target.value)}
-                    rows={14}
-                    placeholder="제목부터 본문까지 그대로 붙여 넣으세요."
-                    className="w-full resize-y rounded-md border border-slate-300 p-3 leading-relaxed"
-                  />
-                </>
-              ) : (
-                <div>
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept=".hwp,.hwpx"
-                    className="sr-only"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) void readFile(f);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => fileRef.current?.click()}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const f = e.dataTransfer.files?.[0];
-                      if (f) void readFile(f);
-                    }}
-                    className="flex w-full flex-col items-center gap-2 rounded-lg border-2 border-dashed border-slate-300 px-6 py-12 hover:border-blue-600 hover:bg-blue-50"
-                  >
-                    {reading ? (
-                      <Loader2 className="h-8 w-8 animate-spin text-blue-600" aria-hidden />
-                    ) : (
-                      <FileUp className="h-8 w-8 text-slate-400" aria-hidden />
-                    )}
-                    <span className="font-bold text-slate-700">
-                      {reading ? '읽는 중…' : '한글 파일을 끌어다 놓거나 눌러서 고르세요'}
-                    </span>
-                    <span className="text-sm text-slate-500">.hwp · .hwpx — 파일은 올라가지 않습니다</span>
-                  </button>
+                </div>
 
-                  {fileNote && (
-                    <p
-                      className={`mt-3 rounded-md border p-3 text-sm ${
-                        fileNote.kind === 'ok'
-                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                          : 'border-red-200 bg-red-50 text-red-800'
+                <div className="flex justify-center gap-2">
+                  {(
+                    [
+                      ['text', '글 붙여넣기'],
+                      ['file', '한글 파일 올리기'],
+                    ] as const
+                  ).map(([k, label]) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => setInputMode(k)}
+                      className={`px-4 py-1.5 rounded-full border text-sm font-bold transition-colors ${
+                        inputMode === k
+                          ? 'bg-blue-600 border-blue-600 text-white'
+                          : 'bg-white border-blue-200 text-blue-700 hover:bg-blue-100'
                       }`}
                     >
-                      {fileNote.msg}
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {inputMode === 'text' ? (
+                  <div className="space-y-2">
+                    <label htmlFor="draft" className="sr-only">
+                      보도자료 초안
+                    </label>
+                    <textarea
+                      id="draft"
+                      value={text}
+                      onChange={(e) => setText(e.target.value)}
+                      rows={12}
+                      placeholder="제목부터 본문까지 그대로 붙여 넣으세요."
+                      className="w-full resize-y rounded-lg border-2 border-blue-600 bg-white p-4
+                                 text-base leading-relaxed text-slate-900 placeholder-slate-400
+                                 outline-none focus:border-blue-700"
+                    />
+                    <p className="text-sm text-slate-600">
+                      첫 줄을 제목으로, 나머지 줄을 본문 문단으로 봅니다. 아래 ‘보도자료 정보’에서 고칠 수
+                      있습니다.
                     </p>
-                  )}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      accept=".hwp,.hwpx"
+                      className="sr-only"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void readFile(f);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileRef.current?.click()}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const f = e.dataTransfer.files?.[0];
+                        if (f) void readFile(f);
+                      }}
+                      className="flex w-full flex-col items-center gap-2 rounded-lg border-2 border-dashed
+                                 border-blue-300 bg-white px-6 py-12 hover:border-blue-600 transition-colors"
+                    >
+                      {reading ? (
+                        <Loader2 className="w-8 h-8 animate-spin text-blue-600" aria-hidden="true" />
+                      ) : (
+                        <FileUp className="w-8 h-8 text-slate-400" aria-hidden="true" />
+                      )}
+                      <span className="font-bold text-slate-800">
+                        {reading ? '읽는 중…' : '한글 파일을 끌어다 놓거나 눌러서 고르세요'}
+                      </span>
+                      <span className="text-sm text-slate-500">
+                        .hwp · .hwpx — 파일은 브라우저 밖으로 나가지 않습니다
+                      </span>
+                    </button>
 
-                  {body.length > 0 && (
-                    <div className="mt-4">
-                      <label htmlFor="bodytext" className="mb-1 block text-sm font-bold text-slate-700">
-                        읽어 온 본문 <span className="font-normal text-slate-500">한 줄에 한 문단</span>
-                      </label>
-                      <textarea
-                        id="bodytext"
-                        rows={8}
-                        className="w-full resize-y rounded-md border border-slate-300 p-3 text-sm leading-relaxed"
-                        value={body.join('\n')}
-                        onChange={(e) => setBody(e.target.value.split('\n'))}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
+                    {fileNote && (
+                      <p
+                        className={`rounded-lg border p-3 text-sm ${
+                          fileNote.kind === 'ok'
+                            ? 'border-green-200 bg-green-50 text-green-700'
+                            : 'border-red-200 bg-red-50 text-red-700'
+                        }`}
+                      >
+                        {fileNote.msg}
+                      </p>
+                    )}
 
-              <details className="mt-5 rounded-md border border-slate-200 p-4" open={inputMode === 'file'}>
-                <summary className="cursor-pointer font-bold">
-                  보도자료 정보{' '}
-                  <span className="text-sm font-normal text-slate-500">
-                    hwpx 머리말 표에 들어갑니다
+                    {body.length > 0 && (
+                      <div className="space-y-1.5">
+                        <label htmlFor="bodytext" className="block text-sm font-bold text-slate-700">
+                          읽어 온 본문{' '}
+                          <span className="font-normal text-slate-500">한 줄에 한 문단</span>
+                        </label>
+                        <textarea
+                          id="bodytext"
+                          rows={8}
+                          className="w-full resize-y rounded-lg border border-slate-300 bg-white p-3 text-sm leading-relaxed"
+                          value={body.join('\n')}
+                          onChange={(e) => setBody(e.target.value.split('\n'))}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span className="text-sm text-slate-600">
+                    {inputMode === 'file'
+                      ? body.length
+                        ? `본문 ${body.length}문단`
+                        : '아직 파일을 올리지 않았습니다'
+                      : text.trim()
+                        ? `${text.trim().split(/\s+/).length}어절 · ${text.length}자`
+                        : '아직 비어 있습니다'}
                   </span>
-                </summary>
-                <div className="mt-4">
-                  <MetaForm value={meta} onChange={setMeta} />
-                </div>
-              </details>
-
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <span className="text-sm text-slate-500">
-                  {inputMode === 'file'
-                    ? body.length
-                      ? `본문 ${body.length}문단`
-                      : '아직 파일을 올리지 않았습니다'
-                    : text.trim()
-                      ? `${text.trim().split(/\s+/).length}어절 · ${text.length}자`
-                      : '아직 비어 있습니다'}
-                </span>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setText(SAMPLE);
-                      setInputMode('text');
-                    }}
-                    className="rounded-md border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                  >
-                    예시 넣기
-                  </button>
-                  <button
-                    type="button"
-                    onClick={run}
-                    disabled={inputMode === 'file' ? body.length === 0 : !text.trim()}
-                    className="flex items-center gap-1.5 rounded-md bg-blue-600 px-6 py-2.5 font-bold text-white hover:bg-blue-700 disabled:bg-slate-300"
-                  >
-                    검토하기
-                    <ArrowRight className="h-4 w-4" aria-hidden />
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setText(SAMPLE);
+                        setInputMode('text');
+                      }}
+                      className="px-4 py-3 rounded-lg bg-white border border-blue-200 text-blue-700 font-bold hover:bg-blue-100 transition-colors"
+                    >
+                      예시 넣기
+                    </button>
+                    <button
+                      type="button"
+                      onClick={run}
+                      disabled={!readyToRun}
+                      className="h-12 px-6 sm:px-10 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300
+                                 text-white font-bold text-lg rounded-lg transition-colors
+                                 flex items-center gap-2 shrink-0"
+                    >
+                      <span>검토하기</span>
+                      <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
+            </section>
+
+            {/* ── 보도자료 정보 ── */}
+            <section className="space-y-3">
+              <SectionTitle desc="hwpx 머리말 표에 그대로 들어갑니다">보도자료 정보</SectionTitle>
+              <div className={`${CARD} p-5`}>
+                <MetaForm value={meta} onChange={setMeta} />
+              </div>
+            </section>
+
+            {/* ── 무엇을 보는지 ── */}
+            <section className="space-y-3">
+              <SectionTitle desc="국립국어원 2026년 공문서등 평가 기준">무엇을 보나</SectionTitle>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <Stat
+                  icon={AXIS_ICON.용이성}
+                  label="용이성"
+                  value={`${DATA_COUNTS.terms.toLocaleString()}개`}
+                  sub="평가용 용어 목록 + 행정용어 100개 + 일본어 투 50개로 외국 글자·외래어를 대조"
+                />
+                <Stat
+                  icon={AXIS_ICON.정확성}
+                  label="정확성"
+                  value={`${DATA_COUNTS.patterns}개`}
+                  sub="두음 법칙·외래어 표기·띄어쓰기·괄호 뒤 조사·번역 투·이중 피동 규칙"
+                />
+                <Stat
+                  icon={AXIS_ICON.소통성}
+                  label="소통성"
+                  value="권위·차별"
+                  sub="고압적 표현과 차별적 표현, 지나치게 긴 문장"
+                />
+              </div>
+            </section>
           </div>
         )}
 
         {/* ------------------ 결과 화면 ------------------ */}
-        {tab === '검토' && result && (
-          <div className="space-y-6">
-            <section className="rounded-lg border border-slate-200 bg-white p-5">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <h1 className="text-2xl font-bold">검토 결과</h1>
-                  <p className="mt-1 text-sm text-slate-600">
-                    {result.wordCount.toLocaleString()}어절 · {result.charCount.toLocaleString()}자 ·
-                    지적 {findings.length}건
-                  </p>
-                </div>
+        {tab === 'check' && result && (
+          <div className="space-y-8 pb-12">
+            {/* 요약 */}
+            <section className="space-y-3">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <SectionTitle
+                  count={findings.length}
+                  desc={`${result.wordCount.toLocaleString()}어절 · ${result.charCount.toLocaleString()}자`}
+                >
+                  검토 결과
+                </SectionTitle>
                 <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={runAi}
-                    disabled={aiState === 'run'}
-                    className="flex items-center gap-1.5 rounded-md border border-blue-600 px-4 py-2 text-sm font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-60"
-                  >
+                  <button type="button" onClick={runAi} disabled={aiState === 'run'} className={BTN_GHOST}>
                     {aiState === 'run' ? (
-                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                      <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
                     ) : (
-                      <Sparkles className="h-4 w-4" aria-hidden />
+                      <Sparkles className="w-4 h-4" aria-hidden="true" />
                     )}
                     {aiState === 'run' ? '검토 중' : 'AI 문맥 검토 추가'}
                   </button>
@@ -544,75 +564,66 @@ export default function App() {
                       setAiFindings([]);
                       setAiSummary('');
                     }}
-                    className={btnGhost}
+                    className={BTN_GHOST}
                   >
-                    <RotateCcw className="h-4 w-4" aria-hidden />
+                    <RotateCcw className="w-4 h-4" aria-hidden="true" />
                     다시 넣기
                   </button>
                 </div>
               </div>
 
-              <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                {AXES.map((a) => {
-                  const n = findings.filter((f) => f.axis === a).length;
-                  const rate = result.byAxis[a].rate;
-                  return (
-                    <div key={a} className="rounded-md border border-slate-200 p-4">
-                      <div className="flex items-baseline justify-between">
-                        <span className={`font-bold ${AXIS_TONE[a].text}`}>{a}</span>
-                        <span className="text-2xl font-bold tabular-nums">{n}</span>
-                      </div>
-                      <div className="mt-2 h-1.5 w-full rounded-full bg-slate-100">
-                        <div
-                          className={`h-1.5 rounded-full ${AXIS_TONE[a].bar}`}
-                          style={{ width: `${Math.min(100, rate * 10)}%` }}
-                        />
-                      </div>
-                      <p className="mt-1.5 text-xs text-slate-500">어절 수 대비 {rate.toFixed(2)}%</p>
-                    </div>
-                  );
-                })}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {AXES.map((a) => (
+                  <Stat
+                    key={a}
+                    icon={AXIS_ICON[a]}
+                    label={a}
+                    value={`${findings.filter((f) => f.axis === a).length}건`}
+                    bar={{ ratio: result.byAxis[a].rate * 10, tone: AXIS_TONE[a] }}
+                    sub={`어절 수 대비 ${result.byAxis[a].rate.toFixed(2)}%`}
+                  />
+                ))}
               </div>
-              <p className="mt-3 text-xs text-slate-500">
+
+              <p className="text-xs text-slate-500">
                 실제 평가는 어절 수 대비 오류 비율로 점수를 매깁니다(용이성 60%, 정확성 30%). 여기 나오는
                 비율은 자동 검사로 걸린 것만 센 참고치이고, 실제 배점 산식과는 다릅니다.
               </p>
 
               {aiState === 'fail' && (
-                <p className="mt-4 flex gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-                  <span>
-                    AI 검토를 하지 못했습니다. 키와 모형 이름을 확인해 주세요.
-                    <br />
-                    <span className="font-mono text-xs break-all">{aiError}</span>
-                  </span>
-                </p>
+                <Notice tone="red" title="AI 검토를 하지 못했습니다">
+                  키와 모형 이름을 확인해 주세요.
+                  <br />
+                  <span className="font-mono text-xs break-all">{aiError}</span>
+                </Notice>
               )}
               {aiSummary && (
-                <p className="mt-4 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-slate-800">
-                  <b className="mr-1 text-blue-700">AI 총평</b>
+                <Notice tone="blue" title="AI 총평">
                   {aiSummary}
-                </p>
+                </Notice>
               )}
             </section>
 
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]">
-              <section className="rounded-lg border border-slate-200 bg-white p-5">
-                <h2 className="mb-3 font-bold">원문</h2>
-                <Highlight text={source} findings={findings} activeKey={active} onPick={setActive} />
-              </section>
+            {/* 원문 + 지적 */}
+            <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]">
+              <div className="space-y-3">
+                <SectionTitle desc="칠해진 곳을 누르면 오른쪽 지적과 이어집니다">원문</SectionTitle>
+                <div className={`${CARD} p-5`}>
+                  <Highlight text={source} findings={findings} activeKey={active} onPick={setActive} />
+                </div>
+              </div>
 
-              <section className="space-y-3">
+              <div className="space-y-3">
                 <div className="flex flex-wrap gap-1.5">
                   {(['전체', ...AXES] as const).map((f) => (
                     <button
                       key={f}
                       type="button"
                       onClick={() => setFilter(f)}
-                      className={`rounded-full border px-3 py-1.5 text-sm ${
+                      className={`px-3 py-1.5 rounded-full border text-sm font-bold transition-colors ${
                         filter === f
-                          ? 'border-blue-600 bg-blue-600 font-bold text-white'
-                          : 'border-slate-300 bg-white text-slate-700 hover:border-blue-600'
+                          ? 'bg-blue-600 border-blue-600 text-white'
+                          : 'bg-white border-slate-300 text-slate-700 hover:border-blue-600'
                       }`}
                     >
                       {f}
@@ -622,9 +633,12 @@ export default function App() {
                 </div>
 
                 {shown.length === 0 ? (
-                  <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-center text-emerald-800">
-                    이 항목에서는 걸린 것이 없습니다.
-                  </p>
+                  <div className={`${CARD} p-8 text-center`}>
+                    <p className="font-bold text-slate-800">이 항목에서는 걸린 것이 없습니다</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      자동 검사에 안 걸렸다는 뜻이지, 규범을 지켰다는 보증은 아닙니다.
+                    </p>
+                  </div>
                 ) : (
                   <ul className="max-h-[70vh] space-y-2 overflow-y-auto pr-1">
                     {shown.map((f) => {
@@ -633,30 +647,20 @@ export default function App() {
                       return (
                         <li
                           key={f.key}
-                          className={`rounded-lg border bg-white p-4 ${
-                            active === f.key ? 'border-slate-900' : 'border-slate-200'
-                          }`}
                           onClick={() => setActive(f.key)}
+                          className={`${CARD} p-4 cursor-pointer transition-colors ${
+                            active === f.key ? 'border-blue-600' : 'hover:border-slate-300'
+                          }`}
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <span
-                              className={`rounded border px-2 py-0.5 text-xs font-bold ${AXIS_TONE[f.axis].chip}`}
-                            >
-                              {f.axis}
-                            </span>
-                            <span
-                              className={`text-xs font-bold ${
-                                f.severity === '오류' ? 'text-red-600' : 'text-amber-700'
-                              }`}
-                            >
-                              {f.severity}
-                            </span>
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <Badge tone={AXIS_TONE[f.axis as Axis]}>{f.axis}</Badge>
+                            <Badge tone={f.severity === '오류' ? 'red' : 'amber'}>{f.severity}</Badge>
                           </div>
                           <p className="mt-2 text-xs text-slate-500">{f.sub}</p>
                           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm">
-                            <span className="rounded bg-red-50 px-1.5 py-0.5 text-red-700">{f.text}</span>
-                            <ArrowRight className="h-3.5 w-3.5 text-slate-400" aria-hidden />
-                            <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-bold text-emerald-700">
+                            <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-700">{f.text}</span>
+                            <ArrowRight className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+                            <span className="px-1.5 py-0.5 rounded bg-green-50 font-bold text-green-700">
                               {f.fixes[d.pick]}
                             </span>
                           </div>
@@ -670,10 +674,10 @@ export default function App() {
                                   key={i}
                                   type="button"
                                   onClick={() => setDecisions((s) => ({ ...s, [f.key]: { ...d, pick: i } }))}
-                                  className={`rounded border px-2 py-0.5 text-xs ${
+                                  className={`px-2 py-0.5 rounded border text-xs transition-colors ${
                                     d.pick === i
                                       ? 'border-blue-600 bg-blue-50 font-bold text-blue-700'
-                                      : 'border-slate-300 text-slate-600'
+                                      : 'border-slate-300 text-slate-600 hover:border-blue-600'
                                   }`}
                                 >
                                   {x}
@@ -694,118 +698,107 @@ export default function App() {
                               onChange={(e) =>
                                 setDecisions((s) => ({ ...s, [f.key]: { ...d, on: e.target.checked } }))
                               }
-                              className="h-4 w-4"
+                              className="w-4 h-4"
                             />
-                            {can ? '수정본에 반영' : '수정본 자동 반영 불가 — 직접 고쳐야 합니다'}
+                            {can ? '수정본에 반영' : '자동 반영 불가 — 직접 고쳐야 합니다'}
                           </label>
                         </li>
                       );
                     })}
                   </ul>
                 )}
-              </section>
-            </div>
+              </div>
+            </section>
 
             {/* 수정본 + 내보내기 */}
-            <section className="rounded-lg border border-slate-200 bg-white p-5">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h2 className="font-bold">반영한 수정본</h2>
-                  <p className="text-sm text-slate-600">
-                    체크한 {Object.values(decisions).filter((d) => d.on).length}건을 갈아 끼운 글입니다.
-                    문맥을 봐야 하는 항목은 자동으로 넣지 않습니다.
-                  </p>
-                </div>
+            <section className="space-y-3">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <SectionTitle
+                  count={Object.values(decisions).filter((d) => d.on).length}
+                  desc="문맥을 봐야 하는 항목은 자동으로 넣지 않습니다"
+                >
+                  반영한 수정본
+                </SectionTitle>
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => copy(revised, '수정본')} className={btnGhost}>
+                  <button type="button" onClick={() => copy(revised, '수정본')} className={BTN_GHOST}>
                     {copied === '수정본' ? (
-                      <Check className="h-4 w-4 text-emerald-600" aria-hidden />
+                      <Check className="w-4 h-4 text-green-600" aria-hidden="true" />
                     ) : (
-                      <Copy className="h-4 w-4" aria-hidden />
+                      <Copy className="w-4 h-4" aria-hidden="true" />
                     )}
                     복사
                   </button>
                   <button
                     type="button"
                     onClick={() =>
-                      saveBlob(
-                        '보도자료_수정본.txt',
-                        new Blob([revised], { type: 'text/plain;charset=utf-8' }),
-                      )
+                      saveBlob('보도자료_수정본.txt', new Blob([revised], { type: 'text/plain;charset=utf-8' }))
                     }
-                    className={btnGhost}
+                    className={BTN_GHOST}
                   >
-                    <Download className="h-4 w-4" aria-hidden />
+                    <Download className="w-4 h-4" aria-hidden="true" />
                     txt
                   </button>
-                  <button
-                    type="button"
-                    onClick={downloadHwpx}
-                    className="flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700"
-                  >
-                    <FileDown className="h-4 w-4" aria-hidden />
+                  <button type="button" onClick={downloadHwpx} className={BTN_PRIMARY}>
+                    <FileDown className="w-4 h-4" aria-hidden="true" />
                     hwpx로 내려받기
                   </button>
                 </div>
               </div>
 
               {exportError && (
-                <p className="mb-3 flex gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-                  hwpx를 만들지 못했습니다: {exportError}
-                </p>
+                <Notice tone="red" title="hwpx를 만들지 못했습니다">
+                  {exportError}
+                </Notice>
               )}
               {!revisedDoc && (
-                <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                  수정본의 문단 수가 원문과 달라 제목·부제 위치를 자동으로 되돌리지 못했습니다. 아래
-                  정보 칸에서 확인한 뒤 내려받으세요.
-                </p>
+                <Notice tone="amber" title="제목·부제 위치를 자동으로 되돌리지 못했습니다">
+                  수정본의 문단 수가 원문과 다릅니다. 아래 머리말 정보에서 확인한 뒤 내려받으세요.
+                </Notice>
               )}
 
-              <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-4 font-sans text-base leading-[1.9]">
-                {revised}
-              </pre>
+              <div className={`${CARD} p-5`}>
+                <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-4 font-sans text-base leading-[1.9]">
+                  {revised}
+                </pre>
 
-              <details className="mt-4 rounded-md border border-slate-200 p-4">
-                <summary className="cursor-pointer font-bold">
-                  hwpx 머리말 정보{' '}
-                  <span className="text-sm font-normal text-slate-500">
-                    배포일·부서·담당자 — 내려받기 전에 채워 주세요
-                  </span>
-                </summary>
-                <div className="mt-4">
-                  <MetaForm value={meta} onChange={setMeta} lockTitle />
-                  <p className="mt-3 rounded bg-slate-50 p-3 text-sm text-slate-600">
-                    제목: <b>{revisedDoc?.meta.제목 || meta.제목 || '(없음)'}</b>
-                    {(revisedDoc?.meta.부제 ?? meta.부제).filter(Boolean).length > 0 && (
-                      <>
-                        <br />
-                        부제: {(revisedDoc?.meta.부제 ?? meta.부제).filter(Boolean).join(' / ')}
-                      </>
-                    )}
-                    <br />
-                    본문 {(revisedDoc?.body ?? body).filter((b) => b.trim()).length}문단 · 파일명{' '}
-                    <span className="font-mono">
-                      {defaultFileName({ ...meta, 제목: revisedDoc?.meta.제목 || meta.제목 })}
+                <details className="mt-4 rounded-md border border-slate-200 p-4">
+                  <summary className="cursor-pointer font-bold text-slate-900">
+                    hwpx 머리말 정보{' '}
+                    <span className="text-sm font-normal text-slate-500">
+                      배포일·부서·담당자 — 내려받기 전에 채워 주세요
                     </span>
-                  </p>
-                </div>
-              </details>
+                  </summary>
+                  <div className="mt-4 space-y-3">
+                    <MetaForm value={meta} onChange={setMeta} lockTitle />
+                    <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600 space-y-0.5">
+                      <p>
+                        제목 <b className="text-slate-900">{revisedDoc?.meta.제목 || meta.제목 || '(없음)'}</b>
+                      </p>
+                      {(revisedDoc?.meta.부제 ?? meta.부제).filter(Boolean).length > 0 && (
+                        <p>부제 {(revisedDoc?.meta.부제 ?? meta.부제).filter(Boolean).join(' / ')}</p>
+                      )}
+                      <p>
+                        본문 {(revisedDoc?.body ?? body).filter((b) => b.trim()).length}문단 · 파일명{' '}
+                        <span className="font-mono">
+                          {defaultFileName({ ...meta, 제목: revisedDoc?.meta.제목 || meta.제목 })}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                </details>
+              </div>
             </section>
 
             {/* 점검표 */}
-            <section className="rounded-lg border border-slate-200 bg-white p-5">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="flex items-center gap-2 font-bold">
-                  <ClipboardCheck className="h-5 w-5 text-blue-600" aria-hidden />
-                  자동 생성 점검표
-                </h2>
+            <section className="space-y-3">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <SectionTitle desc="공공언어의 요건 15항목">자동 생성 점검표</SectionTitle>
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => copy(checklistText, '점검표')} className={btnGhost}>
+                  <button type="button" onClick={() => copy(checklistText, '점검표')} className={BTN_GHOST}>
                     {copied === '점검표' ? (
-                      <Check className="h-4 w-4 text-emerald-600" aria-hidden />
+                      <Check className="w-4 h-4 text-green-600" aria-hidden="true" />
                     ) : (
-                      <Copy className="h-4 w-4" aria-hidden />
+                      <Copy className="w-4 h-4" aria-hidden="true" />
                     )}
                     복사
                   </button>
@@ -817,70 +810,92 @@ export default function App() {
                         new Blob([checklistText], { type: 'text/plain;charset=utf-8' }),
                       )
                     }
-                    className={btnGhost}
+                    className={BTN_GHOST}
                   >
-                    <Download className="h-4 w-4" aria-hidden />
+                    <Download className="w-4 h-4" aria-hidden="true" />
                     내려받기
                   </button>
                 </div>
               </div>
-              <ul className="divide-y divide-slate-100">
-                {checklist.map((c) => (
-                  <li key={c.id} className="flex items-start gap-3 py-2.5">
-                    <span
-                      className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                        c.match.length === 0
-                          ? 'bg-slate-100 text-slate-500'
-                          : c.hits.length === 0
-                            ? 'bg-emerald-100 text-emerald-700'
-                            : 'bg-amber-100 text-amber-800'
-                      }`}
-                    >
-                      {c.match.length === 0 ? '–' : c.hits.length === 0 ? '○' : '△'}
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-sm">
-                        <span className="mr-2 text-xs font-bold text-slate-400">
-                          {c.area}·{c.group}
-                        </span>
-                        {c.question}
-                      </p>
-                      {c.hits.length > 0 && (
-                        <p className="mt-0.5 text-xs text-amber-800">
-                          지적 {c.hits.length}건 — {c.hits.slice(0, 5).map((h) => h.text).join(', ')}
-                          {c.hits.length > 5 && ' …'}
+
+              <div className={`${CARD} overflow-hidden`}>
+                <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs text-slate-500">
+                  <ClipboardCheck className="w-3.5 h-3.5" aria-hidden="true" />
+                  ○ 는 자동 검사에서 걸린 것이 없다는 뜻이고, 지켰다는 보증이 아닙니다
+                </div>
+                <ul className="divide-y divide-slate-100">
+                  {checklist.map((c) => (
+                    <li key={c.id} className="flex items-start gap-3 px-5 py-3">
+                      <span
+                        className={`mt-0.5 w-5 h-5 shrink-0 rounded-full flex items-center justify-center text-xs font-bold ${
+                          c.match.length === 0
+                            ? 'bg-slate-100 text-slate-400'
+                            : c.hits.length === 0
+                              ? 'bg-green-50 text-green-700'
+                              : 'bg-amber-50 text-amber-800'
+                        }`}
+                      >
+                        {c.match.length === 0 ? '–' : c.hits.length === 0 ? '○' : '△'}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-sm text-slate-800">
+                          <span className="mr-2 text-xs font-bold text-slate-400">
+                            {c.area}·{c.group}
+                          </span>
+                          {c.question}
                         </p>
-                      )}
-                      {c.match.length === 0 && (
-                        <p className="mt-0.5 text-xs text-slate-500">
-                          자동 검사 대상이 아닙니다. 작성자가 직접 확인하세요.
-                        </p>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
+                        {c.hits.length > 0 && (
+                          <p className="mt-0.5 text-xs text-amber-800">
+                            지적 {c.hits.length}건 — {c.hits.slice(0, 5).map((h) => h.text).join(', ')}
+                            {c.hits.length > 5 && ' …'}
+                          </p>
+                        )}
+                        {c.match.length === 0 && (
+                          <p className="mt-0.5 text-xs text-slate-500">
+                            자동 검사 대상이 아닙니다. 작성자가 직접 확인하세요.
+                          </p>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </section>
           </div>
         )}
       </main>
 
-      <footer className="mt-12 bg-slate-900 text-slate-300">
-        <div className="mx-auto max-w-7xl space-y-2 px-4 py-8 text-sm sm:px-6 lg:px-8">
-          <p className="font-bold text-white">근거 자료</p>
-          <p>
-            2026년 공공기관등 공문서등 평가 설명회 발표 자료(문화체육관광부 국어정책과·국립국어원, 2026.
-            3. 10.)
-          </p>
-          <p>개정판 한눈에 알아보는 공공언어 바로 쓰기(국립국어원, 2022)</p>
-          <p>2026년 용이성 평가용 용어 목록({DATA_COUNTS.terms.toLocaleString()}개, 2026. 8. 기준)</p>
-          <p>보도자료 양식: 전북특별자치도교육청 공식 hwpx 서식</p>
-          <p className="pt-3 text-xs text-slate-400">
-            공식 평가 결과가 아닙니다. 원고와 올린 파일은 브라우저 안에서만 처리하며, AI 검토를 켠
-            경우에만 사용자가 지정한 사업자의 서버로 전송됩니다.
-          </p>
+      <footer className="bg-slate-900 mt-auto">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="flex flex-col md:flex-row md:items-start justify-between gap-5">
+            <div className="space-y-1.5">
+              <p className="text-base font-bold text-white">
+                보도자료 공공언어 검증{' '}
+                <span className="text-slate-400 font-medium">전북특별자치도교육청</span>
+              </p>
+              <p className="text-sm text-slate-300">
+                공식 평가 결과가 아닙니다. 최종 판단은 작성 부서와 대변인실이 합니다.
+              </p>
+              <p className="text-sm text-slate-300">
+                원고와 올린 파일은 브라우저 안에서만 처리하며, AI 검토를 켠 경우에만 지정한 사업자에게
+                전송됩니다.
+              </p>
+            </div>
+            <div className="text-sm text-slate-300 md:text-right space-y-1">
+              <p className="flex items-center gap-1.5 md:justify-end">
+                <ScrollText className="w-3.5 h-3.5" aria-hidden="true" />
+                근거 자료
+              </p>
+              <p>2026년 공공기관등 공문서등 평가 설명회 자료(문체부·국립국어원)</p>
+              <p>개정판 한눈에 알아보는 공공언어 바로 쓰기(국립국어원, 2022)</p>
+              <p>2026년 용이성 평가용 용어 목록 {DATA_COUNTS.terms.toLocaleString()}개</p>
+              <p>보도자료 양식: 전북특별자치도교육청 공식 hwpx 서식</p>
+            </div>
+          </div>
         </div>
       </footer>
+
+      <ScrollToTopButton />
 
       {showCfg && (
         <SettingsModal
@@ -893,6 +908,32 @@ export default function App() {
         />
       )}
     </div>
+  );
+}
+
+/** 화면을 어느 정도 내렸을 때만 나타나는 '맨 위로' 버튼 (KRDS 상단이동 패턴) */
+function ScrollToTopButton() {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setShow(window.scrollY > 400);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  return (
+    <button
+      type="button"
+      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+      aria-label="맨 위로 이동"
+      className={`fixed bottom-6 right-6 z-40 flex items-center gap-1.5 px-4 py-3
+                  rounded-full border border-slate-300 bg-white text-slate-700 shadow-lg
+                  text-sm font-bold hover:bg-blue-600 hover:border-blue-600 hover:text-white
+                  transition-all ${show ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3 pointer-events-none'}`}
+    >
+      <ArrowUp className="w-4 h-4" aria-hidden="true" />
+      <span className="hidden sm:inline">맨 위로</span>
+    </button>
   );
 }
 

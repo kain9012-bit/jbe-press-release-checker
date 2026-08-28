@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, KeyRound, ShieldCheck } from 'lucide-react';
 import { DEFAULT_MODEL, KEY_HELP, PROVIDER_LABEL, type AiConfig, type Provider } from '../lib/ai';
+import { BTN_PRIMARY, BTN_GHOST } from './Ui';
 
 interface Props {
   value: AiConfig;
@@ -31,7 +32,7 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
 
         <div className="space-y-5 px-5 py-5">
           <p className="flex gap-2 rounded-md bg-slate-50 p-3 text-sm text-slate-700">
-            <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+            <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-green-600" aria-hidden />
             <span>
               키는 이 브라우저에만 저장되고 서버로 보내지 않습니다. 검토를 누를 때 원고가 선택한 회사의
               모형에 직접 전송되므로, <b>대외비 원고는 키를 넣지 말고 규칙 검사만</b> 쓰시기 바랍니다.
@@ -99,14 +100,14 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
               setCfg({ ...cfg, apiKey: '' });
               onSave({ ...cfg, apiKey: '' });
             }}
-            className="rounded-md border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+            className={BTN_GHOST}
           >
             키 지우기
           </button>
           <button
             type="button"
             onClick={() => onSave(cfg)}
-            className="rounded-md bg-blue-600 px-5 py-2 text-sm font-bold text-white hover:bg-blue-700"
+            className={BTN_PRIMARY}
           >
             저장
           </button>

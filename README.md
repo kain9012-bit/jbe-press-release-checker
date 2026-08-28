@@ -8,6 +8,18 @@
 
 작성 부서가 스스로 검증하고, 대변인실의 반복 검토·수정 부담을 줄이는 것이 목적입니다.
 
+## 화면 규격
+
+내가 만드는 웹 화면은 한 벌처럼 보여야 하므로 [jbe-weekly-policy-meeting](https://github.com/kain9012-bit/jbe-weekly-policy-meeting)
+과 같은 규격을 쓴다. 새 화면을 붙일 때도 여기서 벗어나지 않는다.
+
+- `src/index.css` — KRDS 토큰을 Tailwind 기본 팔레트에 덮어씌운 것. k-edu-policy 것을 그대로 가져왔다.
+- `src/components/Ui.tsx` — `Badge` `SectionTitle` `EmptyState` `Stat` `Notice`,
+  그리고 버튼 두 벌(`BTN_PRIMARY` 진회색 / `BTN_GHOST` 테두리)과 `CARD`.
+- `src/components/Header.tsx` — 회색 안내 띠(비공식 고지) + 파란 사각 로고 + 서비스명·기관명 + 탭(`border-b-[3px]`).
+- 본문은 `max-w-7xl mx-auto px-4 sm:px-6 lg:px-8`, 첫 화면은 화면 폭을 채우는 `bg-blue-50` 띠.
+- 푸터는 `bg-slate-900` 두 칸(왼쪽 서비스 설명 / 오른쪽 출처), 오른쪽 아래 '맨 위로' 버튼.
+
 ## 무엇을 보나
 
 | 평가 항목 | 지표 | 이 도구가 하는 일 |

@@ -108,7 +108,13 @@ export default function MetaForm({ value, onChange, lockTitle }: Props) {
             placeholder="중등교육과"
           />
         </div>
-        {(['과장', '담당', '장학사'] as const).map((k) => (
+        {(
+          [
+            ['과장', '김○○ | 063-239-3000'],
+            ['담당', '이○○ | 063-239-3001'],
+            ['장학사', '박○○ | 063-239-3002'],
+          ] as const
+        ).map(([k, ph]) => (
           <div key={k}>
             <label className={L} htmlFor={`m-${k}`}>
               {k} <span className="font-normal text-slate-500">이름 | 전화</span>
@@ -118,7 +124,7 @@ export default function MetaForm({ value, onChange, lockTitle }: Props) {
               className={I}
               value={value[k]}
               onChange={(e) => set(k, e.target.value)}
-              placeholder="김○○ | 063-239-3000"
+              placeholder={ph}
             />
           </div>
         ))}

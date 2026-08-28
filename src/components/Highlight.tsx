@@ -1,9 +1,10 @@
 import type { Finding } from '../lib/analyze';
 
+/** 지적 자리 표시 색 — 배지 색(Ui.tsx)과 같은 계열을 쓴다 */
 const TONE: Record<string, string> = {
-  용이성: 'bg-blue-100 border-b-2 border-blue-600',
-  정확성: 'bg-red-100 border-b-2 border-red-500',
-  소통성: 'bg-amber-100 border-b-2 border-amber-500',
+  용이성: 'bg-blue-50 border-b-2 border-blue-600',
+  정확성: 'bg-red-50 border-b-2 border-red-500',
+  소통성: 'bg-amber-50 border-b-2 border-amber-500',
 };
 
 interface Props {
@@ -31,7 +32,7 @@ export default function Highlight({ text, findings, activeKey, onPick }: Props) 
         title={`${f.axis} · ${f.sub}`}
         className={`${TONE[f.axis] ?? 'bg-slate-100'} ${
           active ? 'ring-2 ring-slate-900 ring-offset-1' : ''
-        } cursor-pointer rounded-sm px-[1px] text-left`}
+        } cursor-pointer rounded-sm px-[1px] text-left transition-colors`}
       >
         {text.slice(f.start, f.end)}
       </button>,
