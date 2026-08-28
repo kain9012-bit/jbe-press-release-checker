@@ -29,7 +29,8 @@ export default function CasesView() {
     <div className="space-y-8 pb-12">
       {/* ── 검색 띠 ── */}
       <section
-        className="relative left-1/2 w-screen -translate-x-1/2 -mt-6
+        data-section="사례 찾기"
+        className="doc-section relative left-1/2 w-screen -translate-x-1/2 -mt-6
                    px-4 sm:px-6 lg:px-8 py-10
                    bg-blue-50 border-b border-blue-100"
       >
@@ -82,7 +83,7 @@ export default function CasesView() {
         </div>
       </section>
 
-      <section className="space-y-3">
+      <section data-section="찾은 사례" className="doc-section space-y-3">
         <SectionTitle count={list.length} desc={list.length >= 300 ? '많아서 300건까지만 보여줍니다' : undefined}>
           찾은 사례
         </SectionTitle>

@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { Header, type Tab } from './components/Header';
 import Highlight from './components/Highlight';
+import SectionNav from './components/SectionNav';
 import SettingsModal from './components/SettingsModal';
 import CriteriaView from './components/CriteriaView';
 import CasesView from './components/CasesView';
@@ -336,7 +337,8 @@ export default function App() {
           <div className="space-y-8 pb-12">
             {/* ── 입력 띠 ── */}
             <section
-              className="relative left-1/2 w-screen -translate-x-1/2 -mt-6
+              data-section="초안 넣기"
+              className="doc-section relative left-1/2 w-screen -translate-x-1/2 -mt-6
                          px-4 sm:px-6 lg:px-8 py-10 sm:py-14
                          bg-blue-50 border-b border-blue-100"
             >
@@ -502,7 +504,7 @@ export default function App() {
             </section>
 
             {/* ── 보도자료 정보 ── */}
-            <section className="space-y-3">
+            <section data-section="보도자료 정보" className="doc-section space-y-3">
               <SectionTitle desc="hwpx 머리말 표에 그대로 들어갑니다">보도자료 정보</SectionTitle>
               <div className={`${CARD} p-5`}>
                 <MetaForm value={meta} onChange={setMeta} />
@@ -510,7 +512,7 @@ export default function App() {
             </section>
 
             {/* ── 무엇을 보는지 ── */}
-            <section className="space-y-3">
+            <section data-section="무엇을 보나" className="doc-section space-y-3">
               <SectionTitle desc="국립국어원 2026년 공문서등 평가 기준">무엇을 보나</SectionTitle>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <Stat
@@ -540,7 +542,7 @@ export default function App() {
         {tab === 'check' && result && (
           <div className="space-y-8 pb-12">
             {/* 요약 */}
-            <section className="space-y-3">
+            <section data-section="검토 결과" className="doc-section space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <SectionTitle
                   count={findings.length}
@@ -605,7 +607,10 @@ export default function App() {
             </section>
 
             {/* 원문 + 지적 */}
-            <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]">
+            <section
+              data-section="원문과 지적"
+              className="doc-section grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]"
+            >
               <div className="space-y-3">
                 <SectionTitle desc="칠해진 곳을 누르면 오른쪽 지적과 이어집니다">원문</SectionTitle>
                 <div className={`${CARD} p-5`}>
@@ -711,7 +716,7 @@ export default function App() {
             </section>
 
             {/* 수정본 + 내보내기 */}
-            <section className="space-y-3">
+            <section data-section="수정본" className="doc-section space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <SectionTitle
                   count={Object.values(decisions).filter((d) => d.on).length}
@@ -790,7 +795,7 @@ export default function App() {
             </section>
 
             {/* 점검표 */}
-            <section className="space-y-3">
+            <section data-section="점검표" className="doc-section space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <SectionTitle desc="공공언어의 요건 15항목">자동 생성 점검표</SectionTitle>
                 <div className="flex gap-2">
@@ -895,6 +900,7 @@ export default function App() {
         </div>
       </footer>
 
+      <SectionNav deps={`${tab}:${result ? 'result' : 'input'}`} />
       <ScrollToTopButton />
 
       {showCfg && (
