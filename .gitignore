@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.DS_Store
+*.local
+
+# 전송·확인용으로 잠깐 두는 것들
+_*
+보도자료-공공언어-자가검증.html
