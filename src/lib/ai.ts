@@ -198,9 +198,39 @@ export async function reviewWithAi(
 /* 쓸 수 있는 모형 목록                                                 */
 /* ------------------------------------------------------------------ */
 
+/** 글을 만드는 모형이 아닌 것 (그림·음성·임베딩 등) */
+const NOT_TEXT = /embedding|aqa|tts|imagen|veo|image-generation|audio|realtime|whisper|dall-e|moderation|davinci|babbage/i;
+
+/** 이름에서 판 번호를 뽑는다. gemini-3.6-flash → 3.6, claude-sonnet-4-5-… → 4.5 */
+function versionOf(id: string): number {
+  const m = id.match(/(\d+)[.\-](\d+)/) ?? id.match(/(\d+)/);
+  if (!m) return 0;
+  return m[2] === undefined ? Number(m[1]) : Number(m[1]) + Number(m[2]) / 100;
+}
+
+/**
+ * 새 판을 위로 올린다.
+ *
+ * 목록을 그대로 두면 오래된 판(제미나이 2.5 같은 것)이 위에 떠서 그걸 고르게 된다.
+ * 그 모형은 신규 사용자에게 막혀 있어 고르는 순간 404 가 난다.
+ * 시험판(preview·exp)은 뒤로 미룬다.
+ */
+function rankModels(ids: string[]): string[] {
+  return ids
+    .filter((id) => !NOT_TEXT.test(id))
+    .sort((a, b) => {
+      const trial = (x: string) => (/(preview|exp|experimental)/i.test(x) ? 1 : 0);
+      return trial(a) - trial(b) || versionOf(b) - versionOf(a) || a.localeCompare(b);
+    });
+}
+
 /**
  * 넣어 둔 키로 그 회사에 물어 실제 쓸 수 있는 모형 이름을 받아 온다.
  * 이름을 코드에 박아 두면 반드시 낡는다. 목록은 키를 넣은 사람만 볼 수 있다.
+ *
+ * 다만 **이 목록에 있다고 내 키로 다 되는 것은 아니다.** 구글은 신규 사용자에게
+ * 막은 옛 모형도 목록에는 그대로 내려 준다. 그래서 `testModel()` 로 실제로
+ * 한 번 불러 보게 해 둔다.
  */
 export async function listModels(cfg: AiConfig): Promise<string[]> {
   if (!cfg.apiKey.trim()) throw new Error('먼저 API 키를 넣어 주세요.');
@@ -211,11 +241,13 @@ export async function listModels(cfg: AiConfig): Promise<string[]> {
     );
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
     const data = await res.json();
-    return (data.models ?? [])
-      .filter((m: { supportedGenerationMethods?: string[] }) =>
-        (m.supportedGenerationMethods ?? []).includes('generateContent'),
-      )
-      .map((m: { name: string }) => m.name.replace(/^models\//, ''));
+    return rankModels(
+      (data.models ?? [])
+        .filter((m: { supportedGenerationMethods?: string[] }) =>
+          (m.supportedGenerationMethods ?? []).includes('generateContent'),
+        )
+        .map((m: { name: string }) => m.name.replace(/^models\//, '')),
+    );
   }
 
   if (cfg.provider === 'openai') {
@@ -224,9 +256,9 @@ export async function listModels(cfg: AiConfig): Promise<string[]> {
     });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
     const data = await res.json();
-    return (data.data ?? [])
-      .map((m: { id: string }) => m.id)
-      .filter((id: string) => /^(gpt|o\d|chatgpt)/i.test(id));
+    return rankModels(
+      (data.data ?? []).map((m: { id: string }) => m.id).filter((id: string) => /^(gpt|o\d|chatgpt)/i.test(id)),
+    );
   }
 
   const res = await fetch('https://api.anthropic.com/v1/models?limit=100', {
@@ -238,5 +270,61 @@ export async function listModels(cfg: AiConfig): Promise<string[]> {
   });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   const data = await res.json();
-  return (data.data ?? []).map((m: { id: string }) => m.id);
+  return rankModels((data.data ?? []).map((m: { id: string }) => m.id));
+}
+
+/**
+ * 고른 모형으로 실제 한 번 불러 본다.
+ *
+ * 목록에 있다고 내 키로 되는 게 아니라서(구글이 옛 모형을 신규 사용자에게 막는다),
+ * 고르고 나서 바로 확인할 수 있게 둔다. 아주 짧게 물어 값도 거의 안 든다.
+ */
+export async function testModel(cfg: AiConfig): Promise<void> {
+  const ping = '안녕하세요라고만 답하세요.';
+
+  if (cfg.provider === 'gemini') {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+      cfg.model,
+    )}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: ping }] }],
+        generationConfig: { maxOutputTokens: 16 },
+      }),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    return;
+  }
+
+  if (cfg.provider === 'openai') {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
+      body: JSON.stringify({
+        model: cfg.model,
+        messages: [{ role: 'user', content: ping }],
+        max_completion_tokens: 16,
+      }),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    return;
+  }
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': cfg.apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: cfg.model,
+      max_tokens: 16,
+      messages: [{ role: 'user', content: ping }],
+    }),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
 }

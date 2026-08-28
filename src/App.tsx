@@ -51,16 +51,33 @@ const AXIS_ICON: Record<Axis, React.ReactNode> = {
   소통성: <MessagesSquare className="w-3.5 h-3.5" aria-hidden="true" />,
 };
 
-const CFG_KEY = 'prc.ai.config.v1';
+const CFG_KEY = 'prc.ai.config.v2';
+const CFG_KEY_OLD = 'prc.ai.config.v1';
 
+/**
+ * 저장해 둔 설정을 읽는다.
+ *
+ * v1 에는 모형 이름까지 저장했는데, 회사가 그 모형을 없애 버리면 브라우저에 죽은
+ * 이름이 계속 남아 다음에도 그대로 404 가 났다. v2 로 넘어오면서 **키만 물려받고
+ * 모형 이름은 버린다.** 이름은 설정 창에서 목록을 받아 고르는 것이 맞다.
+ */
 function loadCfg(): AiConfig {
+  const fallback: AiConfig = { provider: 'anthropic', apiKey: '', model: DEFAULT_MODEL.anthropic };
   try {
     const raw = localStorage.getItem(CFG_KEY);
     if (raw) return JSON.parse(raw) as AiConfig;
+
+    const old = localStorage.getItem(CFG_KEY_OLD);
+    if (old) {
+      const o = JSON.parse(old) as AiConfig;
+      localStorage.removeItem(CFG_KEY_OLD);
+      const provider = o.provider ?? 'anthropic';
+      return { provider, apiKey: o.apiKey ?? '', model: DEFAULT_MODEL[provider] };
+    }
   } catch {
     /* 저장소를 못 쓰는 브라우저도 있다 */
   }
-  return { provider: 'anthropic', apiKey: '', model: DEFAULT_MODEL.anthropic };
+  return fallback;
 }
 
 export default function App() {
@@ -169,6 +186,27 @@ export default function App() {
     } finally {
       setReading(false);
     }
+  }
+
+  /** 넣은 글·파일·머리말까지 전부 비우고 처음 화면으로 (AI 설정은 남긴다) */
+  function reset() {
+    setResult(null);
+    setBaseDoc(null);
+    setSource('');
+    setDecisions({});
+    setAiFindings([]);
+    setAiSummary('');
+    setAiState('idle');
+    setAiError('');
+    setText('');
+    setBody([]);
+    setMeta(EMPTY_META);
+    setFileNote(null);
+    setInputMode('text');
+    setActive(null);
+    setFilter('전체');
+    setExportError('');
+    window.scrollTo({ top: 0, behavior: 'auto' });
   }
 
   /* ---------------- 검토 ---------------- */
@@ -560,15 +598,11 @@ export default function App() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setResult(null);
-                      setAiFindings([]);
-                      setAiSummary('');
-                    }}
+                    onClick={reset}
                     className={BTN_GHOST}
                   >
                     <RotateCcw className="w-4 h-4" aria-hidden="true" />
-                    다시 넣기
+                    처음부터
                   </button>
                 </div>
               </div>

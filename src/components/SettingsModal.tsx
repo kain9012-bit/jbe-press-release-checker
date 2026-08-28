@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { X, KeyRound, ShieldCheck, RefreshCw, Loader2, AlertTriangle } from 'lucide-react';
+import { X, KeyRound, ShieldCheck, RefreshCw, Loader2, AlertTriangle, CircleCheck, Plug } from 'lucide-react';
 import {
   DEFAULT_MODEL,
   KEY_HELP,
   PROVIDER_LABEL,
   listModels,
+  testModel,
   type AiConfig,
   type Provider,
 } from '../lib/ai';
@@ -21,6 +22,21 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
   const [models, setModels] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  async function runTest() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      await testModel(cfg);
+      setTestResult({ ok: true, msg: `‘${cfg.model}’ 로 잘 불러왔습니다.` });
+    } catch (e) {
+      setTestResult({ ok: false, msg: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setTesting(false);
+    }
+  }
 
   async function loadModels() {
     setLoading(true);
@@ -33,6 +49,7 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
     } catch (e) {
       setListError(e instanceof Error ? e.message : String(e));
       setModels([]);
+      setTestResult(null);
     } finally {
       setLoading(false);
     }
@@ -78,6 +95,7 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
                 setCfg({ ...cfg, provider: p, model: DEFAULT_MODEL[p] });
                 setModels([]);
                 setListError('');
+                setTestResult(null);
               }}
             >
               {(Object.keys(PROVIDER_LABEL) as Provider[]).map((p) => (
@@ -129,7 +147,10 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
                 id="model"
                 className="w-full h-11 px-3 rounded-md border border-slate-300 bg-white font-mono text-sm text-slate-800"
                 value={cfg.model}
-                onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
+                onChange={(e) => {
+                  setCfg({ ...cfg, model: e.target.value });
+                  setTestResult(null);
+                }}
               >
                 {models.map((m) => (
                   <option key={m} value={m}>
@@ -147,15 +168,50 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
               />
             )}
 
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={runTest}
+                disabled={testing || !cfg.apiKey.trim() || !cfg.model.trim()}
+                className="flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-xs font-bold
+                           text-slate-700 hover:border-blue-600 hover:text-blue-700 disabled:opacity-50"
+              >
+                {testing ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden />
+                ) : (
+                  <Plug className="w-3.5 h-3.5" aria-hidden />
+                )}
+                이 모형으로 시험 호출
+              </button>
+              <span className="text-xs text-slate-500">한 마디만 물어봅니다</span>
+            </div>
+
+            {testResult && (
+              <p
+                className={`mt-1.5 flex gap-1.5 rounded-md border p-2 text-xs ${
+                  testResult.ok
+                    ? 'border-green-100 bg-green-50 text-green-700'
+                    : 'border-red-200 bg-red-50 text-red-800'
+                }`}
+              >
+                {testResult.ok ? (
+                  <CircleCheck className="mt-0.5 w-3.5 h-3.5 shrink-0" aria-hidden />
+                ) : (
+                  <AlertTriangle className="mt-0.5 w-3.5 h-3.5 shrink-0" aria-hidden />
+                )}
+                <span className="break-all">{testResult.msg}</span>
+              </p>
+            )}
+
             {listError ? (
               <p className="mt-1.5 flex gap-1.5 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">
                 <AlertTriangle className="mt-0.5 w-3.5 h-3.5 shrink-0" aria-hidden />
                 <span className="break-all">목록을 받지 못했습니다 — {listError}</span>
               </p>
             ) : (
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="mt-1.5 text-xs text-slate-500">
                 {models.length > 0
-                  ? `${models.length}개를 받아 왔습니다. 값싸고 빠른 것(flash·mini 계열)으로도 충분합니다.`
+                  ? `${models.length}개를 새 판 순서로 받아 왔습니다. 목록에 있어도 내 키로는 막혀 있는 것이 있으니, 고른 뒤 한 번 시험해 보세요. 값싸고 빠른 것(flash·mini 계열)으로 충분합니다.`
                   : '모형 이름은 회사 사정으로 수시로 없어집니다. 키를 넣고 위 단추를 누르면 지금 쓸 수 있는 것만 골라 줍니다.'}
               </p>
             )}
