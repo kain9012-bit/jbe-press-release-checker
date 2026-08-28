@@ -82,8 +82,8 @@ function loadCfg(): AiConfig {
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('check');
-  const [inputMode, setInputMode] = useState<'text' | 'file'>('text');
   const [text, setText] = useState('');
+  const [dragOver, setDragOver] = useState(false);
   const [meta, setMeta] = useState<ReleaseMeta>(EMPTY_META);
   const [body, setBody] = useState<string[]>([]);
   const [fileNote, setFileNote] = useState<{ kind: 'ok' | 'fail'; msg: string } | null>(null);
@@ -106,6 +106,9 @@ export default function App() {
   const [copied, setCopied] = useState('');
   const [exportError, setExportError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
+  /** 검토를 막 끝냈을 때만 결과로 내려간다(체크만 만졌는데 화면이 튀면 안 된다) */
+  const jumpToResult = useRef(false);
 
   useEffect(() => {
     try {
@@ -118,6 +121,12 @@ export default function App() {
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'auto' });
   }, [tab]);
+
+  useEffect(() => {
+    if (!result || !jumpToResult.current) return;
+    jumpToResult.current = false;
+    resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [result]);
 
   const findings = useMemo(
     () => [...(result?.findings ?? []), ...aiFindings].sort((a, b) => a.start - b.start),
@@ -177,11 +186,16 @@ export default function App() {
         담당: r.담당 || m.담당,
         장학사: r.장학사 || m.장학사,
       }));
+      // 상자에는 제목과 본문만 넣는다. 부제는 ‘보도자료 정보’ 칸이 맡는다
+      // (상자에 같이 넣으면 첫 줄 다음부터는 전부 본문 문단으로 잡힌다).
       setBody(r.본문);
-      setText([r.제목, ...r.부제, ...r.본문].join('\n'));
+      setText([r.제목, ...r.본문].join('\n'));
       setFileNote({
         kind: 'ok',
-        msg: `${file.name} — ${r.서식}, 제목 1줄 · 부제 ${r.부제.length}줄 · 본문 ${r.본문.length}문단을 읽었습니다.`,
+        msg:
+          `${file.name} — ${r.서식}, 제목과 본문 ${r.본문.length}문단을 넣었습니다.` +
+          (r.부제.length ? ` 부제 ${r.부제.length}줄과` : '') +
+          ' 배포일·부서·담당자는 아래 ‘보도자료 정보’에 채웠습니다.',
       });
     } catch (e) {
       setFileNote({ kind: 'fail', msg: e instanceof Error ? e.message : String(e) });
@@ -204,7 +218,8 @@ export default function App() {
     setBody([]);
     setMeta(EMPTY_META);
     setFileNote(null);
-    setInputMode('text');
+    setDragOver(false);
+    jumpToResult.current = false;
     setActive(null);
     setFilter('전체');
     setExportError('');
@@ -221,23 +236,20 @@ export default function App() {
    * 두 단계인 줄 모르고 지나치기 쉬웠다.
    */
   async function run(withAi: boolean) {
-    let doc: Doc;
-    if (inputMode === 'file' && body.length) {
-      doc = { meta, body };
-    } else {
-      const t = text.trim();
-      if (!t) return;
-      const split = splitPastedText(t);
-      const nextMeta: ReleaseMeta = {
-        ...meta,
-        제목: meta.제목.trim() || split.제목,
-        부제: meta.부제.filter((s) => s.trim()),
-      };
-      const nextBody = meta.제목.trim() ? [split.제목, ...split.본문] : split.본문;
-      doc = { meta: nextMeta, body: nextBody };
-      setMeta(nextMeta);
-      setBody(nextBody);
-    }
+    const t = text.trim();
+    if (!t) return;
+
+    // 상자가 유일한 출처다. 첫 줄이 제목, 나머지 줄이 본문 문단.
+    // 부제와 머리말은 ‘보도자료 정보’ 칸에서 온다.
+    const split = splitPastedText(t);
+    const nextMeta: ReleaseMeta = {
+      ...meta,
+      제목: split.제목,
+      부제: meta.부제.filter((x) => x.trim()),
+    };
+    const doc: Doc = { meta: nextMeta, body: split.본문 };
+    setMeta(nextMeta);
+    setBody(split.본문);
 
     const src = composeSource(doc);
     if (!src.trim()) return;
@@ -252,7 +264,7 @@ export default function App() {
     setAiError('');
     setActive(null);
     setExportError('');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    jumpToResult.current = true;
 
     if (withAi) await askAi(src, r.findings);
   }
@@ -381,7 +393,7 @@ export default function App() {
     return lines.join('\n');
   }, [checklist, findings, result, meta.제목]);
 
-  const readyToRun = inputMode === 'file' ? body.length > 0 : text.trim().length > 0;
+  const readyToRun = text.trim().length > 0;
 
   return (
     <div className="min-h-screen overflow-x-clip bg-white text-slate-800 font-sans antialiased flex flex-col selection:bg-blue-600 selection:text-white">
@@ -400,8 +412,8 @@ export default function App() {
         {tab === 'criteria' && <CriteriaView />}
         {tab === 'cases' && <CasesView />}
 
-        {/* ------------------ 입력 화면 ------------------ */}
-        {tab === 'check' && !result && (
+        {/* ------------------ 입력 ------------------ */}
+        {tab === 'check' && (
           <div className="space-y-8 pb-12">
             {/* ── 입력 띠 ── */}
             <section
@@ -424,114 +436,96 @@ export default function App() {
                   </p>
                 </div>
 
-                <div className="flex justify-center gap-2">
-                  {(
-                    [
-                      ['text', '글 붙여넣기'],
-                      ['file', '한글 파일 올리기'],
-                    ] as const
-                  ).map(([k, label]) => (
-                    <button
-                      key={k}
-                      type="button"
-                      onClick={() => setInputMode(k)}
-                      className={`px-4 py-1.5 rounded-full border text-sm font-bold transition-colors ${
-                        inputMode === k
-                          ? 'bg-blue-600 border-blue-600 text-white'
-                          : 'bg-white border-blue-200 text-blue-700 hover:bg-blue-100'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-
-                {inputMode === 'text' ? (
-                  <div className="space-y-2">
-                    <label htmlFor="draft" className="sr-only">
-                      보도자료 초안
-                    </label>
+                {/*
+                  붙여 넣기와 파일 올리기를 나누지 않는다. 상자 하나에 글을 붙이거나
+                  파일을 끌어다 놓으면 되고, 파일이면 머리말 정보까지 같이 채워 준다.
+                */}
+                <div className="space-y-2">
+                  <label htmlFor="draft" className="sr-only">
+                    보도자료 초안
+                  </label>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept=".hwp,.hwpx"
+                    className="sr-only"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void readFile(f);
+                      e.target.value = '';
+                    }}
+                  />
+                  <div
+                    className="relative"
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (!dragOver) setDragOver(true);
+                    }}
+                    onDragLeave={(e) => {
+                      // 안쪽 요소를 지날 때 깜빡이지 않게 상자를 완전히 벗어났을 때만 끈다
+                      if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragOver(false);
+                      const f = e.dataTransfer.files?.[0];
+                      if (f) void readFile(f);
+                    }}
+                  >
                     <textarea
                       id="draft"
                       value={text}
                       onChange={(e) => setText(e.target.value)}
                       rows={12}
-                      placeholder="제목부터 본문까지 그대로 붙여 넣으세요."
-                      className="w-full resize-y rounded-lg border-2 border-blue-600 bg-white p-4
-                                 text-base leading-relaxed text-slate-900 placeholder-slate-400
-                                 outline-none focus:border-blue-700"
+                      placeholder="제목부터 본문까지 그대로 붙여 넣으시거나, 보도자료 양식의 한글 파일(.hwp, .hwpx)을 여기로 끌어다 놓으세요."
+                      className={`w-full resize-y rounded-lg border-2 bg-white p-4
+                                  text-base leading-relaxed text-slate-900 placeholder-slate-400
+                                  outline-none transition-colors ${
+                                    dragOver ? 'border-blue-700 bg-blue-50' : 'border-blue-600 focus:border-blue-700'
+                                  }`}
                     />
-                    <p className="text-sm text-slate-600">
-                      첫 줄을 제목으로, 나머지 줄을 본문 문단으로 봅니다. 아래 ‘보도자료 정보’에서 고칠 수
-                      있습니다.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <input
-                      ref={fileRef}
-                      type="file"
-                      accept=".hwp,.hwpx"
-                      className="sr-only"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) void readFile(f);
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => fileRef.current?.click()}
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        const f = e.dataTransfer.files?.[0];
-                        if (f) void readFile(f);
-                      }}
-                      className="flex w-full flex-col items-center gap-2 rounded-lg border-2 border-dashed
-                                 border-blue-300 bg-white px-6 py-12 hover:border-blue-600 transition-colors"
-                    >
-                      {reading ? (
-                        <Loader2 className="w-8 h-8 animate-spin text-blue-600" aria-hidden="true" />
-                      ) : (
-                        <FileUp className="w-8 h-8 text-slate-400" aria-hidden="true" />
-                      )}
-                      <span className="font-bold text-slate-800">
-                        {reading ? '읽는 중…' : '한글 파일을 끌어다 놓거나 눌러서 고르세요'}
-                      </span>
-                      <span className="text-sm text-slate-500">
-                        .hwp · .hwpx — 파일은 브라우저 밖으로 나가지 않습니다
-                      </span>
-                    </button>
 
-                    {fileNote && (
-                      <p
-                        className={`rounded-lg border p-3 text-sm ${
-                          fileNote.kind === 'ok'
-                            ? 'border-green-200 bg-green-50 text-green-700'
-                            : 'border-red-200 bg-red-50 text-red-700'
-                        }`}
-                      >
-                        {fileNote.msg}
-                      </p>
-                    )}
-
-                    {body.length > 0 && (
-                      <div className="space-y-1.5">
-                        <label htmlFor="bodytext" className="block text-sm font-bold text-slate-700">
-                          읽어 온 본문{' '}
-                          <span className="font-normal text-slate-500">한 줄에 한 문단</span>
-                        </label>
-                        <textarea
-                          id="bodytext"
-                          rows={8}
-                          className="w-full resize-y rounded-lg border border-slate-300 bg-white p-3 text-sm leading-relaxed"
-                          value={body.join('\n')}
-                          onChange={(e) => setBody(e.target.value.split('\n'))}
-                        />
+                    {(dragOver || reading) && (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2
+                                      rounded-lg border-2 border-dashed border-blue-600 bg-blue-50/95">
+                        {reading ? (
+                          <Loader2 className="w-8 h-8 animate-spin text-blue-600" aria-hidden="true" />
+                        ) : (
+                          <FileUp className="w-8 h-8 text-blue-600" aria-hidden="true" />
+                        )}
+                        <span className="font-bold text-blue-800">
+                          {reading ? '한글 파일을 읽는 중…' : '여기에 놓으면 제목·본문과 보도자료 정보를 채웁니다'}
+                        </span>
                       </div>
                     )}
                   </div>
-                )}
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
+                    <span>
+                      첫 줄을 제목으로, 나머지 줄을 본문 문단으로 봅니다. 아래 ‘보도자료 정보’에서 고칠 수
+                      있습니다.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => fileRef.current?.click()}
+                      className="font-bold text-blue-700 underline underline-offset-2 hover:text-blue-800"
+                    >
+                      끌어다 놓기가 어려우면 파일 고르기
+                    </button>
+                  </div>
+
+                  {fileNote && (
+                    <p
+                      className={`rounded-lg border p-3 text-sm ${
+                        fileNote.kind === 'ok'
+                          ? 'border-green-200 bg-green-50 text-green-700'
+                          : 'border-red-200 bg-red-50 text-red-700'
+                      }`}
+                    >
+                      {fileNote.msg}
+                    </p>
+                  )}
+                </div>
 
                 {/* 두 방식의 차이를 고르기 전에 알려 준다 */}
                 <div className="grid gap-2 sm:grid-cols-2 text-sm">
@@ -547,24 +541,25 @@ export default function App() {
 
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <span className="text-sm text-slate-600 basis-full sm:basis-auto">
-                    {inputMode === 'file'
-                      ? body.length
-                        ? `본문 ${body.length}문단`
-                        : '아직 파일을 올리지 않았습니다'
-                      : text.trim()
-                        ? `${text.trim().split(/\s+/).length}어절 · ${text.length}자`
-                        : '아직 비어 있습니다'}
+                    {text.trim()
+                      ? `${text.trim().split(/\s+/).length}어절 · ${text.length}자`
+                      : '아직 비어 있습니다'}
                   </span>
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => {
-                        setText(SAMPLE);
-                        setInputMode('text');
-                      }}
+                      onClick={() => setText(SAMPLE)}
                       className="h-12 px-4 rounded-lg bg-white border border-blue-200 text-blue-700 font-bold hover:bg-blue-100 transition-colors"
                     >
                       예시 넣기
+                    </button>
+                    <button
+                      type="button"
+                      onClick={reset}
+                      className="h-12 px-4 rounded-lg bg-white border border-slate-300 text-slate-700 font-bold hover:border-blue-600 hover:text-blue-700 transition-colors flex items-center gap-1.5"
+                    >
+                      <RotateCcw className="w-4 h-4" aria-hidden="true" />
+                      초기화
                     </button>
                     <button
                       type="button"
@@ -608,9 +603,14 @@ export default function App() {
 
             {/* ── 보도자료 정보 ── */}
             <section className="space-y-3">
-              <SectionTitle desc="hwpx 머리말 표에 그대로 들어갑니다">보도자료 정보</SectionTitle>
+              <SectionTitle desc="hwpx 머리말 표에 그대로 들어갑니다. 한글 파일을 놓으면 자동으로 채워집니다">
+                보도자료 정보
+              </SectionTitle>
               <div className={`${CARD} p-5`}>
-                <MetaForm value={meta} onChange={setMeta} />
+                <MetaForm value={meta} onChange={setMeta} hideTitle />
+                <p className="mt-3 text-xs text-slate-500">
+                  제목은 위 상자의 첫 줄을 그대로 씁니다.
+                </p>
               </div>
             </section>
 
@@ -641,9 +641,9 @@ export default function App() {
           </div>
         )}
 
-        {/* ------------------ 결과 화면 ------------------ */}
+        {/* ------------------ 결과 (입력 아래에 이어 붙는다) ------------------ */}
         {tab === 'check' && result && (
-          <div className="space-y-8 pb-12">
+          <div ref={resultRef} className="space-y-8 pb-12 scroll-mt-28">
             {/* 요약 */}
             <section className="space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-3">
