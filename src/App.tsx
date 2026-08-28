@@ -99,6 +99,8 @@ export default function App() {
   const [aiError, setAiError] = useState('');
   const [cfg, setCfg] = useState<AiConfig>(loadCfg);
   const [showCfg, setShowCfg] = useState(false);
+  /** 키가 없어 설정 창을 열었을 때, 저장 뒤 이어서 할 일 */
+  const [afterKey, setAfterKey] = useState<'run' | 'add' | null>(null);
   const [filter, setFilter] = useState<'전체' | Axis>('전체');
   const [active, setActive] = useState<string | null>(null);
   const [copied, setCopied] = useState('');
@@ -211,7 +213,14 @@ export default function App() {
 
   /* ---------------- 검토 ---------------- */
 
-  function run() {
+  /**
+   * 검토 시작.
+   *
+   * `withAi` 면 규칙 검사를 끝내고 이어서 AI 문맥 검토까지 한 번에 한다.
+   * 예전에는 검토를 누른 뒤 결과 화면에서 다시 'AI 검토 추가' 를 눌러야 해서
+   * 두 단계인 줄 모르고 지나치기 쉬웠다.
+   */
+  async function run(withAi: boolean) {
     let doc: Doc;
     if (inputMode === 'file' && body.length) {
       doc = { meta, body };
@@ -244,17 +253,16 @@ export default function App() {
     setActive(null);
     setExportError('');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    if (withAi) await askAi(src, r.findings);
   }
 
-  async function runAi() {
-    if (!result || !cfg.apiKey) {
-      setShowCfg(true);
-      return;
-    }
+  /** AI 에게 문맥 검토를 맡긴다. 규칙으로 이미 잡은 것은 넘겨서 중복 지적을 막는다. */
+  async function askAi(src: string, ruleFindings: Finding[]) {
     setAiState('run');
     setAiError('');
     try {
-      const r = await reviewWithAi(cfg, source, result.findings);
+      const r = await reviewWithAi(cfg, src, ruleFindings);
       setAiFindings(r.findings);
       setAiSummary(r.summary);
       setDecisions((d) => {
@@ -267,6 +275,28 @@ export default function App() {
       setAiError(e instanceof Error ? e.message : String(e));
       setAiState('fail');
     }
+  }
+
+  /** 결과 화면에서 뒤늦게 AI 검토를 붙일 때 */
+  function addAi() {
+    if (!result) return;
+    if (!cfg.apiKey) {
+      setAfterKey('add');
+      setShowCfg(true);
+      return;
+    }
+    void askAi(source, result.findings);
+  }
+
+  /** 키를 넣으러 갔다가 돌아왔을 때 이어서 할 일 */
+  function onSaveCfg(v: AiConfig) {
+    setCfg(v);
+    setShowCfg(false);
+    if (!v.apiKey.trim() || !afterKey) return;
+    const next = afterKey;
+    setAfterKey(null);
+    if (next === 'run') void run(true);
+    else if (result) void askAi(source, result.findings);
   }
 
   /* ---------------- 내보내기 ---------------- */
@@ -503,8 +533,20 @@ export default function App() {
                   </div>
                 )}
 
+                {/* 두 방식의 차이를 고르기 전에 알려 준다 */}
+                <div className="grid gap-2 sm:grid-cols-2 text-sm">
+                  <p className="rounded-md bg-white/70 px-3 py-2 text-slate-700">
+                    <b className="text-slate-900">규칙으로 검토</b> — 용어 목록과 어문 규범으로 대조합니다.
+                    바로 끝나고, 원고는 이 브라우저 밖으로 나가지 않습니다.
+                  </p>
+                  <p className="rounded-md bg-white/70 px-3 py-2 text-slate-700">
+                    <b className="text-slate-900">AI까지 검토</b> — 여기에 호응·비문·군더더기까지 봅니다.
+                    <b className="text-slate-900"> 원고가 지정한 사업자에게 전송</b>되니 대외비는 위쪽을 쓰세요.
+                  </p>
+                </div>
+
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <span className="text-sm text-slate-600">
+                  <span className="text-sm text-slate-600 basis-full sm:basis-auto">
                     {inputMode === 'file'
                       ? body.length
                         ? `본문 ${body.length}문단`
@@ -513,27 +555,51 @@ export default function App() {
                         ? `${text.trim().split(/\s+/).length}어절 · ${text.length}자`
                         : '아직 비어 있습니다'}
                   </span>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => {
                         setText(SAMPLE);
                         setInputMode('text');
                       }}
-                      className="px-4 py-3 rounded-lg bg-white border border-blue-200 text-blue-700 font-bold hover:bg-blue-100 transition-colors"
+                      className="h-12 px-4 rounded-lg bg-white border border-blue-200 text-blue-700 font-bold hover:bg-blue-100 transition-colors"
                     >
                       예시 넣기
                     </button>
                     <button
                       type="button"
-                      onClick={run}
+                      onClick={() => void run(false)}
                       disabled={!readyToRun}
-                      className="h-12 px-6 sm:px-10 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300
+                      className="h-12 px-5 sm:px-8 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300
                                  text-white font-bold text-lg rounded-lg transition-colors
                                  flex items-center gap-2 shrink-0"
                     >
-                      <span>검토하기</span>
+                      <span>규칙으로 검토</span>
                       <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!readyToRun) return;
+                        if (!cfg.apiKey) {
+                          setAfterKey('run');
+                          setShowCfg(true);
+                          return;
+                        }
+                        void run(true);
+                      }}
+                      disabled={!readyToRun || aiState === 'run'}
+                      className="h-12 px-5 sm:px-8 rounded-lg border-2 border-blue-600 bg-white
+                                 text-blue-700 font-bold text-lg hover:bg-blue-100 transition-colors
+                                 disabled:border-slate-300 disabled:text-slate-400
+                                 flex items-center gap-2 shrink-0"
+                    >
+                      {aiState === 'run' ? (
+                        <Loader2 className="w-5 h-5 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Sparkles className="w-5 h-5" aria-hidden="true" />
+                      )}
+                      <span>AI까지 검토</span>
                     </button>
                   </div>
                 </div>
@@ -588,14 +654,16 @@ export default function App() {
                   검토 결과
                 </SectionTitle>
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={runAi} disabled={aiState === 'run'} className={BTN_GHOST}>
-                    {aiState === 'run' ? (
-                      <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-                    ) : (
-                      <Sparkles className="w-4 h-4" aria-hidden="true" />
-                    )}
-                    {aiState === 'run' ? '검토 중' : 'AI 문맥 검토 추가'}
-                  </button>
+                  {aiFindings.length === 0 && (
+                    <button type="button" onClick={addAi} disabled={aiState === 'run'} className={BTN_GHOST}>
+                      {aiState === 'run' ? (
+                        <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Sparkles className="w-4 h-4" aria-hidden="true" />
+                      )}
+                      {aiState === 'run' ? 'AI가 보는 중' : 'AI 문맥 검토도 받기'}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={reset}
@@ -973,11 +1041,11 @@ export default function App() {
       {showCfg && (
         <SettingsModal
           value={cfg}
-          onSave={(v) => {
-            setCfg(v);
+          onSave={onSaveCfg}
+          onClose={() => {
+            setAfterKey(null);
             setShowCfg(false);
           }}
-          onClose={() => setShowCfg(false)}
         />
       )}
     </div>
