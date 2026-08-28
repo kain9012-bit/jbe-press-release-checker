@@ -202,21 +202,6 @@
    ============================================================ */
 html {
   -webkit-text-size-adjust: 100%;
-
-  /* 구획으로 건너뛸 때 부드럽게 흐르도록 */
-  scroll-behavior: smooth;
-}
-
-/*
-  구획의 착지 지점. 고정 머리말에 가리지 않도록 위쪽 여백을 준다.
-
-  CSS scroll-snap(proximity 포함)은 쓰지 않는다. 한 번 시험해 봤는데,
-  화면보다 긴 구획(원문·지적 목록, 점검표) 안에서 휠을 조금 굴리면
-  방금 지나온 경계로 도로 끌려가 안쪽 내용을 읽을 수가 없었다.
-  구획 이동은 오른쪽 막대와 Alt + ↑/↓ 로 명시적으로 한다.
-*/
-.doc-section {
-  scroll-margin-top: 6.5rem;
 }
 
 body {
@@ -317,9 +302,5 @@ mark {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
-  }
-  /* 움직임을 줄여 달라고 한 사람에게는 스크롤도 흘리지 않는다 */
-  html {
-    scroll-behavior: auto;
   }
 }

@@ -7,7 +7,7 @@ export default function CriteriaView() {
   return (
     <div className="space-y-8 pb-12">
       {/* ── 평가 개요 ── */}
-      <section data-section="평가 개요" className="doc-section space-y-3">
+      <section className="space-y-3">
         <SectionTitle desc="문화체육관광부 국어정책과 · 국립국어원">
           2026년 공문서등 평가
         </SectionTitle>
@@ -63,7 +63,7 @@ export default function CriteriaView() {
       </section>
 
       {/* ── 이 도구가 보는 기준 ── */}
-      <section data-section="보는 기준" className="doc-section space-y-3">
+      <section className="space-y-3">
         <SectionTitle desc="자동으로 대조하는 자료와 규칙">이 도구가 보는 기준</SectionTitle>
         <div className="grid gap-3 lg:grid-cols-3">
           {[
@@ -102,7 +102,7 @@ export default function CriteriaView() {
       </section>
 
       {/* ── 공공언어의 요건 ── */}
-      <section data-section="공공언어의 요건" className="doc-section space-y-3">
+      <section className="space-y-3">
         <SectionTitle
           count={CHECKLIST.length}
           unit="항목"

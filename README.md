@@ -19,13 +19,6 @@
 - `src/components/Header.tsx` — 회색 안내 띠(비공식 고지) + 파란 사각 로고 + 서비스명·기관명 + 탭(`border-b-[3px]`).
 - 본문은 `max-w-7xl mx-auto px-4 sm:px-6 lg:px-8`, 첫 화면은 화면 폭을 채우는 `bg-blue-50` 띠.
 - 푸터는 `bg-slate-900` 두 칸(왼쪽 서비스 설명 / 오른쪽 출처), 오른쪽 아래 '맨 위로' 버튼.
-- `src/components/SectionNav.tsx` — 오른쪽 구획 이동 막대. 화면 안의 `[data-section]` 을 훑어
-  목록을 만들므로, 구획을 더하거나 뺄 때 이 파일을 고칠 일은 없다.
-  구획에는 `data-section="이름"` 과 `className="doc-section"` 을 같이 준다.
-
-  CSS `scroll-snap` 은 **일부러 쓰지 않았다.** proximity 로도 시험해 봤는데, 화면보다 긴
-  구획(원문·지적 목록, 점검표) 안에서 휠을 조금 굴리면 방금 지나온 경계로 도로 끌려가
-  안쪽을 읽을 수가 없었다. 그래서 휠은 그대로 두고, 구획 이동은 막대와 Alt + ↑/↓ 로 한다.
 
 ## 무엇을 보나
 
