@@ -22,7 +22,7 @@ export default function CasesView() {
       (c) =>
         (g === '전체' || c.c === g) &&
         (!key || c.w.includes(key) || c.r.includes(key) || c.why.join(' ').includes(key)),
-    ).slice(0, 300);
+    );
   }, [q, g]);
 
   return (
@@ -83,9 +83,7 @@ export default function CasesView() {
       </section>
 
       <section className="space-y-3">
-        <SectionTitle count={list.length} desc={list.length >= 300 ? '많아서 300건까지만 보여줍니다' : undefined}>
-          찾은 사례
-        </SectionTitle>
+        <SectionTitle count={list.length}>찾은 사례</SectionTitle>
 
         <p className="text-xs text-slate-500">
           원본 책자 PDF에서 자동으로 뽑은 것이라 편집 과정에서 잘린 항목이 섞여 있을 수 있습니다.
