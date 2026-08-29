@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -16,15 +16,24 @@ import {
   SpellCheck,
   Sparkles,
   MessagesSquare,
-} from 'lucide-react';
-import { Header, type Tab } from './components/Header';
-import Highlight from './components/Highlight';
-import SettingsModal from './components/SettingsModal';
-import CriteriaView from './components/CriteriaView';
-import CasesView from './components/CasesView';
-import MetaForm from './components/MetaForm';
-import { Badge, SectionTitle, Stat, Notice, BTN_PRIMARY, BTN_GHOST, CARD, type Tone } from './components/Ui';
-import { CHECKLIST } from './data/checklist';
+} from "lucide-react";
+import { Header, type Tab } from "./components/Header";
+import Highlight from "./components/Highlight";
+import SettingsModal from "./components/SettingsModal";
+import CriteriaView from "./components/CriteriaView";
+import CasesView from "./components/CasesView";
+import MetaForm from "./components/MetaForm";
+import {
+  Badge,
+  SectionTitle,
+  Stat,
+  Notice,
+  BTN_PRIMARY,
+  BTN_GHOST,
+  CARD,
+  type Tone,
+} from "./components/Ui";
+import { CHECKLIST } from "./data/checklist";
 import {
   analyze,
   buildRevised,
@@ -35,24 +44,33 @@ import {
   type AnalyzeResult,
   type Decision,
   type Finding,
-} from './lib/analyze';
-import { DEFAULT_MODEL, reviewWithAi, type AiConfig } from './lib/ai';
-import { parsePressRelease } from './lib/hwp';
-import { buildHwpx, defaultFileName, EMPTY_META, type ReleaseMeta } from './lib/hwpxOut';
-import { composeSource, decompose, splitPastedText, type Doc } from './lib/doc';
+} from "./lib/analyze";
+import { DEFAULT_MODEL, reviewWithAi, type AiConfig } from "./lib/ai";
+import { parsePressRelease } from "./lib/hwp";
+import {
+  buildHwpx,
+  defaultFileName,
+  EMPTY_META,
+  type ReleaseMeta,
+} from "./lib/hwpxOut";
+import { composeSource, decompose, splitPastedText, type Doc } from "./lib/doc";
 
-const AXES = ['용이성', '정확성', '소통성'] as const;
+const AXES = ["용이성", "정확성", "소통성"] as const;
 type Axis = (typeof AXES)[number];
 
-const AXIS_TONE: Record<Axis, Tone> = { 용이성: 'blue', 정확성: 'red', 소통성: 'amber' };
+const AXIS_TONE: Record<Axis, Tone> = {
+  용이성: "blue",
+  정확성: "red",
+  소통성: "amber",
+};
 const AXIS_ICON: Record<Axis, React.ReactNode> = {
   용이성: <Languages className="w-3.5 h-3.5" aria-hidden="true" />,
   정확성: <SpellCheck className="w-3.5 h-3.5" aria-hidden="true" />,
   소통성: <MessagesSquare className="w-3.5 h-3.5" aria-hidden="true" />,
 };
 
-const CFG_KEY = 'prc.ai.config.v2';
-const CFG_KEY_OLD = 'prc.ai.config.v1';
+const CFG_KEY = "prc.ai.config.v2";
+const CFG_KEY_OLD = "prc.ai.config.v1";
 
 /**
  * 저장해 둔 설정을 읽는다.
@@ -62,7 +80,11 @@ const CFG_KEY_OLD = 'prc.ai.config.v1';
  * 모형 이름은 버린다.** 이름은 설정 창에서 목록을 받아 고르는 것이 맞다.
  */
 function loadCfg(): AiConfig {
-  const fallback: AiConfig = { provider: 'anthropic', apiKey: '', model: DEFAULT_MODEL.anthropic };
+  const fallback: AiConfig = {
+    provider: "anthropic",
+    apiKey: "",
+    model: DEFAULT_MODEL.anthropic,
+  };
   try {
     const raw = localStorage.getItem(CFG_KEY);
     if (raw) return JSON.parse(raw) as AiConfig;
@@ -71,8 +93,12 @@ function loadCfg(): AiConfig {
     if (old) {
       const o = JSON.parse(old) as AiConfig;
       localStorage.removeItem(CFG_KEY_OLD);
-      const provider = o.provider ?? 'anthropic';
-      return { provider, apiKey: o.apiKey ?? '', model: DEFAULT_MODEL[provider] };
+      const provider = o.provider ?? "anthropic";
+      return {
+        provider,
+        apiKey: o.apiKey ?? "",
+        model: DEFAULT_MODEL[provider],
+      };
     }
   } catch {
     /* 저장소를 못 쓰는 브라우저도 있다 */
@@ -81,30 +107,35 @@ function loadCfg(): AiConfig {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('check');
-  const [text, setText] = useState('');
+  const [tab, setTab] = useState<Tab>("check");
+  const [text, setText] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [meta, setMeta] = useState<ReleaseMeta>(EMPTY_META);
   const [body, setBody] = useState<string[]>([]);
-  const [fileNote, setFileNote] = useState<{ kind: 'ok' | 'fail'; msg: string } | null>(null);
+  const [fileNote, setFileNote] = useState<{
+    kind: "ok" | "fail";
+    msg: string;
+  } | null>(null);
   const [reading, setReading] = useState(false);
 
   const [result, setResult] = useState<AnalyzeResult | null>(null);
-  const [source, setSource] = useState('');
+  const [source, setSource] = useState("");
   const [baseDoc, setBaseDoc] = useState<Doc | null>(null);
   const [decisions, setDecisions] = useState<Record<string, Decision>>({});
   const [aiFindings, setAiFindings] = useState<Finding[]>([]);
-  const [aiSummary, setAiSummary] = useState('');
-  const [aiState, setAiState] = useState<'idle' | 'run' | 'done' | 'fail'>('idle');
-  const [aiError, setAiError] = useState('');
+  const [aiSummary, setAiSummary] = useState("");
+  const [aiState, setAiState] = useState<"idle" | "run" | "done" | "fail">(
+    "idle",
+  );
+  const [aiError, setAiError] = useState("");
   const [cfg, setCfg] = useState<AiConfig>(loadCfg);
   const [showCfg, setShowCfg] = useState(false);
   /** 키가 없어 설정 창을 열었을 때, 저장 뒤 이어서 할 일 */
-  const [afterKey, setAfterKey] = useState<'run' | 'add' | null>(null);
-  const [filter, setFilter] = useState<'전체' | Axis>('전체');
+  const [afterKey, setAfterKey] = useState<"run" | "add" | null>(null);
+  const [filter, setFilter] = useState<"전체" | Axis>("전체");
   const [active, setActive] = useState<string | null>(null);
-  const [copied, setCopied] = useState('');
-  const [exportError, setExportError] = useState('');
+  const [copied, setCopied] = useState("");
+  const [exportError, setExportError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
   /** 검토를 막 끝냈을 때만 결과로 내려간다(체크만 만졌는데 화면이 튀면 안 된다) */
@@ -119,25 +150,28 @@ export default function App() {
   }, [cfg]);
 
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: 'auto' });
+    window.scrollTo({ top: 0, behavior: "auto" });
   }, [tab]);
 
   useEffect(() => {
     if (!result || !jumpToResult.current) return;
     jumpToResult.current = false;
-    resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [result]);
 
   const findings = useMemo(
-    () => [...(result?.findings ?? []), ...aiFindings].sort((a, b) => a.start - b.start),
+    () =>
+      [...(result?.findings ?? []), ...aiFindings].sort(
+        (a, b) => a.start - b.start,
+      ),
     [result, aiFindings],
   );
   const shown = useMemo(
-    () => findings.filter((f) => filter === '전체' || f.axis === filter),
+    () => findings.filter((f) => filter === "전체" || f.axis === filter),
     [findings, filter],
   );
   const revised = useMemo(
-    () => (result ? buildRevised(source, findings, decisions) : ''),
+    () => (result ? buildRevised(source, findings, decisions) : ""),
     [result, source, findings, decisions],
   );
 
@@ -170,7 +204,10 @@ export default function App() {
       const buf = new Uint8Array(await file.arrayBuffer());
       const r = parsePressRelease(buf);
       if (!r.ok) {
-        setFileNote({ kind: 'fail', msg: r.error || '보도자료 내용을 찾지 못했습니다.' });
+        setFileNote({
+          kind: "fail",
+          msg: r.error || "보도자료 내용을 찾지 못했습니다.",
+        });
         return;
       }
       setMeta((m) => ({
@@ -189,16 +226,19 @@ export default function App() {
       // 상자에는 제목과 본문만 넣는다. 부제는 ‘보도자료 정보’ 칸이 맡는다
       // (상자에 같이 넣으면 첫 줄 다음부터는 전부 본문 문단으로 잡힌다).
       setBody(r.본문);
-      setText([r.제목, ...r.본문].join('\n'));
+      setText([r.제목, ...r.본문].join("\n"));
       setFileNote({
-        kind: 'ok',
+        kind: "ok",
         msg:
           `${file.name} — ${r.서식}, 제목과 본문 ${r.본문.length}문단을 넣었습니다.` +
-          (r.부제.length ? ` 부제 ${r.부제.length}줄과` : '') +
-          ' 배포일·부서·담당자는 아래 ‘보도자료 정보’에 채웠습니다.',
+          (r.부제.length ? ` 부제 ${r.부제.length}줄과` : "") +
+          " 배포일·부서·담당자는 아래 ‘보도자료 정보’에 채웠습니다.",
       });
     } catch (e) {
-      setFileNote({ kind: 'fail', msg: e instanceof Error ? e.message : String(e) });
+      setFileNote({
+        kind: "fail",
+        msg: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setReading(false);
     }
@@ -208,22 +248,22 @@ export default function App() {
   function reset() {
     setResult(null);
     setBaseDoc(null);
-    setSource('');
+    setSource("");
     setDecisions({});
     setAiFindings([]);
-    setAiSummary('');
-    setAiState('idle');
-    setAiError('');
-    setText('');
+    setAiSummary("");
+    setAiState("idle");
+    setAiError("");
+    setText("");
     setBody([]);
     setMeta(EMPTY_META);
     setFileNote(null);
     setDragOver(false);
     jumpToResult.current = false;
     setActive(null);
-    setFilter('전체');
-    setExportError('');
-    window.scrollTo({ top: 0, behavior: 'auto' });
+    setFilter("전체");
+    setExportError("");
+    window.scrollTo({ top: 0, behavior: "auto" });
   }
 
   /* ---------------- 검토 ---------------- */
@@ -259,11 +299,11 @@ export default function App() {
     setResult(r);
     setDecisions(defaultDecisions(r.findings));
     setAiFindings([]);
-    setAiSummary('');
-    setAiState('idle');
-    setAiError('');
+    setAiSummary("");
+    setAiState("idle");
+    setAiError("");
     setActive(null);
-    setExportError('');
+    setExportError("");
     jumpToResult.current = true;
 
     if (withAi) await askAi(src, r.findings);
@@ -271,8 +311,8 @@ export default function App() {
 
   /** AI 에게 문맥 검토를 맡긴다. 규칙으로 이미 잡은 것은 넘겨서 중복 지적을 막는다. */
   async function askAi(src: string, ruleFindings: Finding[]) {
-    setAiState('run');
-    setAiError('');
+    setAiState("run");
+    setAiError("");
     try {
       const r = await reviewWithAi(cfg, src, ruleFindings);
       setAiFindings(r.findings);
@@ -282,10 +322,10 @@ export default function App() {
         for (const f of r.findings) next[f.key] = { on: false, pick: 0 };
         return next;
       });
-      setAiState('done');
+      setAiState("done");
     } catch (e) {
       setAiError(e instanceof Error ? e.message : String(e));
-      setAiState('fail');
+      setAiState("fail");
     }
   }
 
@@ -293,7 +333,7 @@ export default function App() {
   function addAi() {
     if (!result) return;
     if (!cfg.apiKey) {
-      setAfterKey('add');
+      setAfterKey("add");
       setShowCfg(true);
       return;
     }
@@ -307,7 +347,7 @@ export default function App() {
     if (!v.apiKey.trim() || !afterKey) return;
     const next = afterKey;
     setAfterKey(null);
-    if (next === 'run') void run(true);
+    if (next === "run") void run(true);
     else if (result) void askAi(source, result.findings);
   }
 
@@ -317,15 +357,15 @@ export default function App() {
     navigator.clipboard.writeText(what).then(
       () => {
         setCopied(label);
-        setTimeout(() => setCopied(''), 1800);
+        setTimeout(() => setCopied(""), 1800);
       },
-      () => setCopied('실패'),
+      () => setCopied("실패"),
     );
   }
 
   function saveBlob(name: string, blob: Blob) {
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
     a.download = name;
     document.body.appendChild(a);
@@ -338,16 +378,20 @@ export default function App() {
   }
 
   function downloadHwpx() {
-    setExportError('');
+    setExportError("");
     const d =
       revisedDoc ??
-      (baseDoc ? { meta: { ...baseDoc.meta, ...headerOnly(meta) }, body: baseDoc.body } : null);
+      (baseDoc
+        ? { meta: { ...baseDoc.meta, ...headerOnly(meta) }, body: baseDoc.body }
+        : null);
     if (!d) return;
     try {
       const bytes = buildHwpx(d.meta, d.body);
       saveBlob(
         defaultFileName(d.meta),
-        new Blob([bytes as unknown as BlobPart], { type: 'application/hwp+zip' }),
+        new Blob([bytes as unknown as BlobPart], {
+          type: "application/hwp+zip",
+        }),
       );
     } catch (e) {
       setExportError(e instanceof Error ? e.message : String(e));
@@ -367,30 +411,30 @@ export default function App() {
 
   const checklistText = useMemo(() => {
     const lines = [
-      '보도자료 공공언어 자가점검표',
-      `작성 시각: ${new Date().toLocaleString('ko-KR')}`,
+      "보도자료 공공언어 자가점검표",
+      `작성 시각: ${new Date().toLocaleString("ko-KR")}`,
       `제목: ${meta.제목}`,
       `분량: ${result?.wordCount ?? 0}어절 / ${result?.charCount ?? 0}자`,
-      '',
+      "",
       ...AXES.map((a) => {
         const b = result?.byAxis[a];
         return `[${a}] 지적 ${findings.filter((f) => f.axis === a).length}건 · 어절 수 대비 ${
-          b ? b.rate.toFixed(2) : '0.00'
+          b ? b.rate.toFixed(2) : "0.00"
         }%`;
       }),
-      '',
-      '── 공공언어의 요건 점검 ──',
+      "",
+      "── 공공언어의 요건 점검 ──",
       ...checklist.map(
         (c) =>
-          `[${c.match.length === 0 ? '–' : c.hits.length === 0 ? '○' : '△'}] ${c.area}·${c.group} ${
+          `[${c.match.length === 0 ? "–" : c.hits.length === 0 ? "○" : "△"}] ${c.area}·${c.group} ${
             c.question
-          }${c.hits.length ? `  (지적 ${c.hits.length}건)` : ''}`,
+          }${c.hits.length ? `  (지적 ${c.hits.length}건)` : ""}`,
       ),
-      '',
-      '※ ○ 는 자동 검사에서 걸린 것이 없다는 뜻이고, 지켰다는 보증이 아닙니다.',
-      '※ 단락 구성·정보의 양과 배열·시각적 편의는 자동 검사 대상이 아니므로 작성자가 직접 확인하세요.',
+      "",
+      "※ ○ 는 자동 검사에서 걸린 것이 없다는 뜻이고, 지켰다는 보증이 아닙니다.",
+      "※ 단락 구성·정보의 양과 배열·시각적 편의는 자동 검사 대상이 아니므로 작성자가 직접 확인하세요.",
     ];
-    return lines.join('\n');
+    return lines.join("\n");
   }, [checklist, findings, result, meta.제목]);
 
   const readyToRun = text.trim().length > 0;
@@ -408,12 +452,15 @@ export default function App() {
         dataAsOf="2026. 8."
       />
 
-      <main id="container" className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {tab === 'criteria' && <CriteriaView />}
-        {tab === 'cases' && <CasesView />}
+      <main
+        id="container"
+        className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6"
+      >
+        {tab === "criteria" && <CriteriaView />}
+        {tab === "cases" && <CasesView />}
 
         {/* ------------------ 입력 ------------------ */}
-        {tab === 'check' && (
+        {tab === "check" && (
           <div className="space-y-8 pb-12">
             {/* ── 입력 띠 ── */}
             <section
@@ -424,15 +471,27 @@ export default function App() {
               <div className="max-w-4xl mx-auto space-y-6">
                 <div className="text-center space-y-3">
                   <h2 className="text-3xl sm:text-[2.75rem] font-bold text-slate-900 leading-tight">
-                    <span className="block sm:inline">보도자료를 내기 전에</span>{' '}
+                    <span className="block sm:inline">
+                      보도자료를 내기 전에
+                    </span>{" "}
                     <span className="text-blue-700">공공언어부터 봅니다</span>
                   </h2>
                   <p className="text-base sm:text-lg text-slate-600">
-                    글을 붙여 넣거나 쓰던 한글 파일을 올리면{' '}
-                    <strong className="font-bold text-slate-900">고칠 곳</strong> ·
-                    <strong className="font-bold text-slate-900"> 수정본</strong> ·
-                    <strong className="font-bold text-slate-900"> 점검표</strong>를 만들고,
-                    전북교육청 양식 hwpx로 돌려드립니다
+                    글을 붙여 넣거나 쓰던 한글 파일을 올리면{" "}
+                    <strong className="font-bold text-slate-900">
+                      고칠 곳
+                    </strong>{" "}
+                    ·
+                    <strong className="font-bold text-slate-900">
+                      {" "}
+                      수정본
+                    </strong>{" "}
+                    ·
+                    <strong className="font-bold text-slate-900">
+                      {" "}
+                      점검표
+                    </strong>
+                    를 만들고, 전북교육청 양식 hwpx로 돌려드립니다
                   </p>
                 </div>
 
@@ -452,7 +511,7 @@ export default function App() {
                     onChange={(e) => {
                       const f = e.target.files?.[0];
                       if (f) void readFile(f);
-                      e.target.value = '';
+                      e.target.value = "";
                     }}
                   />
                   <div
@@ -463,7 +522,8 @@ export default function App() {
                     }}
                     onDragLeave={(e) => {
                       // 안쪽 요소를 지날 때 깜빡이지 않게 상자를 완전히 벗어났을 때만 끈다
-                      if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
+                      if (!e.currentTarget.contains(e.relatedTarget as Node))
+                        setDragOver(false);
                     }}
                     onDrop={(e) => {
                       e.preventDefault();
@@ -481,20 +541,32 @@ export default function App() {
                       className={`w-full resize-y rounded-lg border-2 bg-white p-4
                                   text-base leading-relaxed text-slate-900 placeholder-slate-400
                                   outline-none transition-colors ${
-                                    dragOver ? 'border-blue-700 bg-blue-50' : 'border-blue-600 focus:border-blue-700'
+                                    dragOver
+                                      ? "border-blue-700 bg-blue-50"
+                                      : "border-blue-600 focus:border-blue-700"
                                   }`}
                     />
 
                     {(dragOver || reading) && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2
-                                      rounded-lg border-2 border-dashed border-blue-600 bg-blue-50/95">
+                      <div
+                        className="absolute inset-0 flex flex-col items-center justify-center gap-2
+                                      rounded-lg border-2 border-dashed border-blue-600 bg-blue-50/95"
+                      >
                         {reading ? (
-                          <Loader2 className="w-8 h-8 animate-spin text-blue-600" aria-hidden="true" />
+                          <Loader2
+                            className="w-8 h-8 animate-spin text-blue-600"
+                            aria-hidden="true"
+                          />
                         ) : (
-                          <FileUp className="w-8 h-8 text-blue-600" aria-hidden="true" />
+                          <FileUp
+                            className="w-8 h-8 text-blue-600"
+                            aria-hidden="true"
+                          />
                         )}
                         <span className="font-bold text-blue-800">
-                          {reading ? '한글 파일을 읽는 중…' : '여기에 놓으면 제목·본문과 보도자료 정보를 채웁니다'}
+                          {reading
+                            ? "한글 파일을 읽는 중…"
+                            : "여기에 놓으면 제목·본문과 보도자료 정보를 채웁니다"}
                         </span>
                       </div>
                     )}
@@ -502,8 +574,8 @@ export default function App() {
 
                   <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
                     <span>
-                      첫 줄을 제목으로, 나머지 줄을 본문 문단으로 봅니다. 아래 ‘보도자료 정보’에서 고칠 수
-                      있습니다.
+                      첫 줄을 제목으로, 나머지 줄을 본문 문단으로 봅니다. 아래
+                      ‘보도자료 정보’에서 고칠 수 있습니다.
                     </span>
                     <button
                       type="button"
@@ -517,9 +589,9 @@ export default function App() {
                   {fileNote && (
                     <p
                       className={`rounded-lg border p-3 text-sm ${
-                        fileNote.kind === 'ok'
-                          ? 'border-green-200 bg-green-50 text-green-700'
-                          : 'border-red-200 bg-red-50 text-red-700'
+                        fileNote.kind === "ok"
+                          ? "border-green-200 bg-green-50 text-green-700"
+                          : "border-red-200 bg-red-50 text-red-700"
                       }`}
                     >
                       {fileNote.msg}
@@ -530,12 +602,18 @@ export default function App() {
                 {/* 두 방식의 차이를 고르기 전에 알려 준다 */}
                 <div className="grid gap-2 sm:grid-cols-2 text-sm">
                   <p className="rounded-md bg-white/70 px-3 py-2 text-slate-700">
-                    <b className="text-slate-900">규칙으로 검토</b> — 용어 목록과 어문 규범으로 대조합니다.
-                    바로 끝나고, 원고는 이 브라우저 밖으로 나가지 않습니다.
+                    <b className="text-slate-900">규칙으로 검토</b> — 용어
+                    목록과 어문 규범으로 대조합니다. 바로 끝나고, 원고는 이
+                    브라우저 밖으로 나가지 않습니다.
                   </p>
                   <p className="rounded-md bg-white/70 px-3 py-2 text-slate-700">
-                    <b className="text-slate-900">AI까지 검토</b> — 여기에 호응·비문·군더더기까지 봅니다.
-                    <b className="text-slate-900"> 원고가 지정한 사업자에게 전송</b>되니 대외비는 위쪽을 쓰세요.
+                    <b className="text-slate-900">AI까지 검토</b> — 여기에
+                    호응·비문·군더더기까지 봅니다.
+                    <b className="text-slate-900">
+                      {" "}
+                      원고가 지정한 사업자에게 전송
+                    </b>
+                    되니 대외비는 위쪽을 쓰세요.
                   </p>
                 </div>
 
@@ -543,7 +621,7 @@ export default function App() {
                   <span className="text-sm text-slate-600 basis-full sm:basis-auto">
                     {text.trim()
                       ? `${text.trim().split(/\s+/).length}어절 · ${text.length}자`
-                      : '아직 비어 있습니다'}
+                      : "아직 비어 있습니다"}
                   </span>
                   <div className="flex flex-wrap gap-2">
                     <button
@@ -577,20 +655,23 @@ export default function App() {
                       onClick={() => {
                         if (!readyToRun) return;
                         if (!cfg.apiKey) {
-                          setAfterKey('run');
+                          setAfterKey("run");
                           setShowCfg(true);
                           return;
                         }
                         void run(true);
                       }}
-                      disabled={!readyToRun || aiState === 'run'}
+                      disabled={!readyToRun || aiState === "run"}
                       className="h-12 px-5 sm:px-8 rounded-lg border-2 border-blue-600 bg-white
                                  text-blue-700 font-bold text-lg hover:bg-blue-100 transition-colors
                                  disabled:border-slate-300 disabled:text-slate-400
                                  flex items-center gap-2 shrink-0"
                     >
-                      {aiState === 'run' ? (
-                        <Loader2 className="w-5 h-5 animate-spin" aria-hidden="true" />
+                      {aiState === "run" ? (
+                        <Loader2
+                          className="w-5 h-5 animate-spin"
+                          aria-hidden="true"
+                        />
                       ) : (
                         <Sparkles className="w-5 h-5" aria-hidden="true" />
                       )}
@@ -616,7 +697,9 @@ export default function App() {
 
             {/* ── 무엇을 보는지 ── */}
             <section className="space-y-3">
-              <SectionTitle desc="국립국어원 2026년 공문서등 평가 기준">무엇을 보나</SectionTitle>
+              <SectionTitle desc="국립국어원 2026년 공문서등 평가 기준">
+                무엇을 보나
+              </SectionTitle>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <Stat
                   icon={AXIS_ICON.용이성}
@@ -642,7 +725,7 @@ export default function App() {
         )}
 
         {/* ------------------ 결과 (입력 아래에 이어 붙는다) ------------------ */}
-        {tab === 'check' && result && (
+        {tab === "check" && result && (
           <div ref={resultRef} className="space-y-8 pb-12 scroll-mt-28">
             {/* 요약 */}
             <section className="space-y-3">
@@ -655,20 +738,26 @@ export default function App() {
                 </SectionTitle>
                 <div className="flex flex-wrap gap-2">
                   {aiFindings.length === 0 && (
-                    <button type="button" onClick={addAi} disabled={aiState === 'run'} className={BTN_GHOST}>
-                      {aiState === 'run' ? (
-                        <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                    <button
+                      type="button"
+                      onClick={addAi}
+                      disabled={aiState === "run"}
+                      className={BTN_GHOST}
+                    >
+                      {aiState === "run" ? (
+                        <Loader2
+                          className="w-4 h-4 animate-spin"
+                          aria-hidden="true"
+                        />
                       ) : (
                         <Sparkles className="w-4 h-4" aria-hidden="true" />
                       )}
-                      {aiState === 'run' ? 'AI가 보는 중' : 'AI 문맥 검토도 받기'}
+                      {aiState === "run"
+                        ? "AI가 보는 중"
+                        : "AI 문맥 검토도 받기"}
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={reset}
-                    className={BTN_GHOST}
-                  >
+                  <button type="button" onClick={reset} className={BTN_GHOST}>
                     <RotateCcw className="w-4 h-4" aria-hidden="true" />
                     처음부터
                   </button>
@@ -682,18 +771,22 @@ export default function App() {
                     icon={AXIS_ICON[a]}
                     label={a}
                     value={`${findings.filter((f) => f.axis === a).length}건`}
-                    bar={{ ratio: result.byAxis[a].rate * 10, tone: AXIS_TONE[a] }}
+                    bar={{
+                      ratio: result.byAxis[a].rate * 10,
+                      tone: AXIS_TONE[a],
+                    }}
                     sub={`어절 수 대비 ${result.byAxis[a].rate.toFixed(2)}%`}
                   />
                 ))}
               </div>
 
               <p className="text-xs text-slate-500">
-                실제 평가는 어절 수 대비 오류 비율로 점수를 매깁니다(용이성 60%, 정확성 30%). 여기 나오는
-                비율은 자동 검사로 걸린 것만 센 참고치이고, 실제 배점 산식과는 다릅니다.
+                실제 평가는 어절 수 대비 오류 비율로 점수를 매깁니다(용이성 60%,
+                정확성 30%). 여기 나오는 비율은 자동 검사로 걸린 것만 센
+                참고치이고, 실제 배점 산식과는 다릅니다.
               </p>
 
-              {aiState === 'fail' && (
+              {aiState === "fail" && (
                 <Notice tone="red" title="AI 검토를 하지 못했습니다">
                   키와 모형 이름을 확인해 주세요.
                   <br />
@@ -710,143 +803,194 @@ export default function App() {
             {/* 원문 + 지적 */}
             <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]">
               <div className="space-y-3">
-                <SectionTitle desc="칠해진 곳을 누르면 오른쪽 지적과 이어집니다">원문</SectionTitle>
+                <SectionTitle desc="칠해진 곳을 누르면 오른쪽 지적과 이어집니다">
+                  원문
+                </SectionTitle>
                 <div className={`${CARD} p-5`}>
-                  <Highlight text={source} findings={findings} activeKey={active} onPick={setActive} />
+                  <Highlight
+                    text={source}
+                    findings={findings}
+                    activeKey={active}
+                    onPick={setActive}
+                  />
                 </div>
               </div>
 
-              <div className="space-y-3">
+              {/*
+                오른쪽 지적 목록의 높이를 왼쪽 원문 카드에 맞춘다.
+                목록을 absolute 로 띄워 두면 목록이 아무리 길어도 줄 높이를 늘리지 못하므로,
+                줄 높이는 원문 카드가 정하고 목록은 그 안에서 스크롤된다.
+                좁은 화면에서는 위아래로 쌓이니 예전처럼 그냥 흐르게 둔다.
+              */}
+              <div className="flex flex-col gap-3 lg:min-h-0">
                 <div className="flex flex-wrap gap-1.5">
-                  {(['전체', ...AXES] as const).map((f) => (
+                  {(["전체", ...AXES] as const).map((f) => (
                     <button
                       key={f}
                       type="button"
                       onClick={() => setFilter(f)}
                       className={`px-3 py-1.5 rounded-full border text-sm font-bold transition-colors ${
                         filter === f
-                          ? 'bg-blue-600 border-blue-600 text-white'
-                          : 'bg-white border-slate-300 text-slate-700 hover:border-blue-600'
+                          ? "bg-blue-600 border-blue-600 text-white"
+                          : "bg-white border-slate-300 text-slate-700 hover:border-blue-600"
                       }`}
                     >
                       {f}
-                      {f !== '전체' && ` ${findings.filter((x) => x.axis === f).length}`}
+                      {f !== "전체" &&
+                        ` ${findings.filter((x) => x.axis === f).length}`}
                     </button>
                   ))}
                 </div>
 
                 {shown.length === 0 ? (
                   <div className={`${CARD} p-8 text-center`}>
-                    <p className="font-bold text-slate-800">이 항목에서는 걸린 것이 없습니다</p>
+                    <p className="font-bold text-slate-800">
+                      이 항목에서는 걸린 것이 없습니다
+                    </p>
                     <p className="mt-1 text-sm text-slate-500">
-                      자동 검사에 안 걸렸다는 뜻이지, 규범을 지켰다는 보증은 아닙니다.
+                      자동 검사에 안 걸렸다는 뜻이지, 규범을 지켰다는 보증은
+                      아닙니다.
                     </p>
                   </div>
                 ) : (
-                  <ul className="max-h-[70vh] space-y-2 overflow-y-auto pr-1">
-                    {shown.map((f) => {
-                      const d = decisions[f.key] ?? { on: false, pick: 0 };
-                      const can = isApplicable(f.fixes[d.pick] ?? '');
-                      const rep = replacementFor(f, d);
-                      return (
-                        <li
-                          key={f.key}
-                          onClick={() => setActive(f.key)}
-                          className={`${CARD} p-4 cursor-pointer transition-colors ${
-                            active === f.key ? 'border-blue-600' : 'hover:border-slate-300'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <Badge tone={AXIS_TONE[f.axis as Axis]}>{f.axis}</Badge>
-                            <Badge tone={f.severity === '오류' ? 'red' : 'amber'}>{f.severity}</Badge>
-                          </div>
-                          <p className="mt-2 text-xs text-slate-500">{f.sub}</p>
-                          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm">
-                            <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-700">{f.text}</span>
-                            <ArrowRight className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
-                            <span className="px-1.5 py-0.5 rounded bg-green-50 font-bold text-green-700">
-                              {f.fixes[d.pick]}
-                            </span>
-                          </div>
-                          <p className="mt-2 text-sm leading-relaxed text-slate-600">{f.why}</p>
-                          <p className="mt-1 text-xs text-slate-400">{f.src}</p>
-
-                          {f.fixes.length > 1 && (
-                            <div className="mt-2 flex flex-wrap gap-1">
-                              {f.fixes.map((x, i) => (
-                                <button
-                                  key={i}
-                                  type="button"
-                                  onClick={() => setDecisions((s) => ({ ...s, [f.key]: { ...d, pick: i } }))}
-                                  className={`px-2 py-0.5 rounded border text-xs transition-colors ${
-                                    d.pick === i
-                                      ? 'border-blue-600 bg-blue-50 font-bold text-blue-700'
-                                      : 'border-slate-300 text-slate-600 hover:border-blue-600'
-                                  }`}
-                                >
-                                  {x}
-                                </button>
-                              ))}
+                  <div className="relative flex-1 lg:min-h-0">
+                    <ul className="max-h-[70vh] space-y-2 overflow-y-auto pr-1 lg:absolute lg:inset-0 lg:max-h-none">
+                      {shown.map((f) => {
+                        const d = decisions[f.key] ?? { on: false, pick: 0 };
+                        const can = isApplicable(f.fixes[d.pick] ?? "");
+                        const rep = replacementFor(f, d);
+                        return (
+                          <li
+                            key={f.key}
+                            onClick={() => setActive(f.key)}
+                            className={`${CARD} p-4 cursor-pointer transition-colors ${
+                              active === f.key
+                                ? "border-blue-600"
+                                : "hover:border-slate-300"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <Badge tone={AXIS_TONE[f.axis as Axis]}>
+                                {f.axis}
+                              </Badge>
+                              <Badge
+                                tone={f.severity === "오류" ? "red" : "amber"}
+                              >
+                                {f.severity}
+                              </Badge>
                             </div>
-                          )}
+                            <p className="mt-2 text-xs text-slate-500">
+                              {f.sub}
+                            </p>
+                            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm">
+                              <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-700">
+                                {f.text}
+                              </span>
+                              <ArrowRight
+                                className="w-3.5 h-3.5 text-slate-400"
+                                aria-hidden="true"
+                              />
+                              <span className="px-1.5 py-0.5 rounded bg-green-50 font-bold text-green-700">
+                                {f.fixes[d.pick]}
+                              </span>
+                            </div>
+                            <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                              {f.why}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-400">
+                              {f.src}
+                            </p>
 
-                          {/*
+                            {f.fixes.length > 1 && (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {f.fixes.map((x, i) => (
+                                  <button
+                                    key={i}
+                                    type="button"
+                                    onClick={() =>
+                                      setDecisions((s) => ({
+                                        ...s,
+                                        [f.key]: { ...d, pick: i },
+                                      }))
+                                    }
+                                    className={`px-2 py-0.5 rounded border text-xs transition-colors ${
+                                      d.pick === i
+                                        ? "border-blue-600 bg-blue-50 font-bold text-blue-700"
+                                        : "border-slate-300 text-slate-600 hover:border-blue-600"
+                                    }`}
+                                  >
+                                    {x}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+
+                            {/*
                             대안이 지시문이거나 앞말에 따라 달라지는 경우에는 기계가 고를 수
                             없다. 그럴 때는 손으로 적어 넣게 하고, 적으면 그것을 수정본에 쓴다.
                           */}
-                          {!can && (
-                            <div className="mt-3">
-                              <label
-                                htmlFor={`fix-${f.key}`}
-                                className="block text-xs font-bold text-slate-500"
-                              >
-                                고쳐 넣을 말을 직접 적으세요
-                              </label>
+                            {!can && (
+                              <div className="mt-3">
+                                <label
+                                  htmlFor={`fix-${f.key}`}
+                                  className="block text-xs font-bold text-slate-500"
+                                >
+                                  고쳐 넣을 말을 직접 적으세요
+                                </label>
+                                <input
+                                  id={`fix-${f.key}`}
+                                  type="text"
+                                  value={d.custom ?? ""}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    setDecisions((s) => ({
+                                      ...s,
+                                      [f.key]: {
+                                        ...d,
+                                        custom: v,
+                                        on: v.trim().length > 0,
+                                      },
+                                    }));
+                                  }}
+                                  placeholder={`‘${f.text}’ 자리에 넣을 말`}
+                                  className="mt-1 w-full h-9 px-2.5 rounded-md border border-slate-300 bg-white
+                                           text-sm font-semibold text-slate-800 outline-none focus:border-blue-600"
+                                />
+                              </div>
+                            )}
+
+                            <label
+                              className={`mt-3 flex items-center gap-2 text-sm ${
+                                rep ? "text-slate-700" : "text-slate-400"
+                              }`}
+                            >
                               <input
-                                id={`fix-${f.key}`}
-                                type="text"
-                                value={d.custom ?? ''}
-                                onClick={(e) => e.stopPropagation()}
-                                onChange={(e) => {
-                                  const v = e.target.value;
+                                type="checkbox"
+                                disabled={!rep}
+                                checked={Boolean(d.on && rep)}
+                                onChange={(e) =>
                                   setDecisions((s) => ({
                                     ...s,
-                                    [f.key]: { ...d, custom: v, on: v.trim().length > 0 },
-                                  }));
-                                }}
-                                placeholder={`‘${f.text}’ 자리에 넣을 말`}
-                                className="mt-1 w-full h-9 px-2.5 rounded-md border border-slate-300 bg-white
-                                           text-sm font-semibold text-slate-800 outline-none focus:border-blue-600"
+                                    [f.key]: { ...d, on: e.target.checked },
+                                  }))
+                                }
+                                className="w-4 h-4"
                               />
-                            </div>
-                          )}
-
-                          <label
-                            className={`mt-3 flex items-center gap-2 text-sm ${
-                              rep ? 'text-slate-700' : 'text-slate-400'
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              disabled={!rep}
-                              checked={Boolean(d.on && rep)}
-                              onChange={(e) =>
-                                setDecisions((s) => ({ ...s, [f.key]: { ...d, on: e.target.checked } }))
-                              }
-                              className="w-4 h-4"
-                            />
-                            {rep ? (
-                              <span>
-                                수정본에 <b className="text-slate-900">{rep}</b> 넣기
-                              </span>
-                            ) : (
-                              '적어 넣으면 수정본에 반영됩니다'
-                            )}
-                          </label>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                              {rep ? (
+                                <span>
+                                  수정본에{" "}
+                                  <b className="text-slate-900">{rep}</b> 넣기
+                                </span>
+                              ) : (
+                                "적어 넣으면 수정본에 반영됩니다"
+                              )}
+                            </label>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
                 )}
               </div>
             </section>
@@ -861,9 +1005,16 @@ export default function App() {
                   반영한 수정본
                 </SectionTitle>
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => copy(revised, '수정본')} className={BTN_GHOST}>
-                    {copied === '수정본' ? (
-                      <Check className="w-4 h-4 text-green-600" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={() => copy(revised, "수정본")}
+                    className={BTN_GHOST}
+                  >
+                    {copied === "수정본" ? (
+                      <Check
+                        className="w-4 h-4 text-green-600"
+                        aria-hidden="true"
+                      />
                     ) : (
                       <Copy className="w-4 h-4" aria-hidden="true" />
                     )}
@@ -872,14 +1023,23 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() =>
-                      saveBlob('보도자료_수정본.txt', new Blob([revised], { type: 'text/plain;charset=utf-8' }))
+                      saveBlob(
+                        "보도자료_수정본.txt",
+                        new Blob([revised], {
+                          type: "text/plain;charset=utf-8",
+                        }),
+                      )
                     }
                     className={BTN_GHOST}
                   >
                     <Download className="w-4 h-4" aria-hidden="true" />
                     txt
                   </button>
-                  <button type="button" onClick={downloadHwpx} className={BTN_PRIMARY}>
+                  <button
+                    type="button"
+                    onClick={downloadHwpx}
+                    className={BTN_PRIMARY}
+                  >
                     <FileDown className="w-4 h-4" aria-hidden="true" />
                     hwpx로 내려받기
                   </button>
@@ -892,8 +1052,12 @@ export default function App() {
                 </Notice>
               )}
               {!revisedDoc && (
-                <Notice tone="amber" title="제목·부제 위치를 자동으로 되돌리지 못했습니다">
-                  수정본의 문단 수가 원문과 다릅니다. 아래 머리말 정보에서 확인한 뒤 내려받으세요.
+                <Notice
+                  tone="amber"
+                  title="제목·부제 위치를 자동으로 되돌리지 못했습니다"
+                >
+                  수정본의 문단 수가 원문과 다릅니다. 아래 머리말 정보에서
+                  확인한 뒤 내려받으세요.
                 </Notice>
               )}
 
@@ -904,7 +1068,7 @@ export default function App() {
 
                 <details className="mt-4 rounded-md border border-slate-200 p-4">
                   <summary className="cursor-pointer font-bold text-slate-900">
-                    hwpx 머리말 정보{' '}
+                    hwpx 머리말 정보{" "}
                     <span className="text-sm font-normal text-slate-500">
                       배포일·부서·담당자 — 내려받기 전에 채워 주세요
                     </span>
@@ -913,15 +1077,32 @@ export default function App() {
                     <MetaForm value={meta} onChange={setMeta} lockTitle />
                     <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600 space-y-0.5">
                       <p>
-                        제목 <b className="text-slate-900">{revisedDoc?.meta.제목 || meta.제목 || '(없음)'}</b>
+                        제목{" "}
+                        <b className="text-slate-900">
+                          {revisedDoc?.meta.제목 || meta.제목 || "(없음)"}
+                        </b>
                       </p>
-                      {(revisedDoc?.meta.부제 ?? meta.부제).filter(Boolean).length > 0 && (
-                        <p>부제 {(revisedDoc?.meta.부제 ?? meta.부제).filter(Boolean).join(' / ')}</p>
+                      {(revisedDoc?.meta.부제 ?? meta.부제).filter(Boolean)
+                        .length > 0 && (
+                        <p>
+                          부제{" "}
+                          {(revisedDoc?.meta.부제 ?? meta.부제)
+                            .filter(Boolean)
+                            .join(" / ")}
+                        </p>
                       )}
                       <p>
-                        본문 {(revisedDoc?.body ?? body).filter((b) => b.trim()).length}문단 · 파일명{' '}
+                        본문{" "}
+                        {
+                          (revisedDoc?.body ?? body).filter((b) => b.trim())
+                            .length
+                        }
+                        문단 · 파일명{" "}
                         <span className="font-mono">
-                          {defaultFileName({ ...meta, 제목: revisedDoc?.meta.제목 || meta.제목 })}
+                          {defaultFileName({
+                            ...meta,
+                            제목: revisedDoc?.meta.제목 || meta.제목,
+                          })}
                         </span>
                       </p>
                     </div>
@@ -933,11 +1114,20 @@ export default function App() {
             {/* 점검표 */}
             <section className="space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-3">
-                <SectionTitle desc="공공언어의 요건 15항목">자동 생성 점검표</SectionTitle>
+                <SectionTitle desc="공공언어의 요건 15항목">
+                  자동 생성 점검표
+                </SectionTitle>
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => copy(checklistText, '점검표')} className={BTN_GHOST}>
-                    {copied === '점검표' ? (
-                      <Check className="w-4 h-4 text-green-600" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={() => copy(checklistText, "점검표")}
+                    className={BTN_GHOST}
+                  >
+                    {copied === "점검표" ? (
+                      <Check
+                        className="w-4 h-4 text-green-600"
+                        aria-hidden="true"
+                      />
                     ) : (
                       <Copy className="w-4 h-4" aria-hidden="true" />
                     )}
@@ -947,8 +1137,10 @@ export default function App() {
                     type="button"
                     onClick={() =>
                       saveBlob(
-                        '보도자료_점검표.txt',
-                        new Blob([checklistText], { type: 'text/plain;charset=utf-8' }),
+                        "보도자료_점검표.txt",
+                        new Blob([checklistText], {
+                          type: "text/plain;charset=utf-8",
+                        }),
                       )
                     }
                     className={BTN_GHOST}
@@ -961,8 +1153,9 @@ export default function App() {
 
               <div className={`${CARD} overflow-hidden`}>
                 <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs text-slate-500">
-                  <ClipboardCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                  ○ 는 자동 검사에서 걸린 것이 없다는 뜻이고, 지켰다는 보증이 아닙니다
+                  <ClipboardCheck className="w-3.5 h-3.5" aria-hidden="true" />○
+                  는 자동 검사에서 걸린 것이 없다는 뜻이고, 지켰다는 보증이
+                  아닙니다
                 </div>
                 <ul className="divide-y divide-slate-100">
                   {checklist.map((c) => (
@@ -970,13 +1163,17 @@ export default function App() {
                       <span
                         className={`mt-0.5 w-5 h-5 shrink-0 rounded-full flex items-center justify-center text-xs font-bold ${
                           c.match.length === 0
-                            ? 'bg-slate-100 text-slate-400'
+                            ? "bg-slate-100 text-slate-400"
                             : c.hits.length === 0
-                              ? 'bg-green-50 text-green-700'
-                              : 'bg-amber-50 text-amber-800'
+                              ? "bg-green-50 text-green-700"
+                              : "bg-amber-50 text-amber-800"
                         }`}
                       >
-                        {c.match.length === 0 ? '–' : c.hits.length === 0 ? '○' : '△'}
+                        {c.match.length === 0
+                          ? "–"
+                          : c.hits.length === 0
+                            ? "○"
+                            : "△"}
                       </span>
                       <div className="min-w-0">
                         <p className="text-sm text-slate-800">
@@ -987,8 +1184,12 @@ export default function App() {
                         </p>
                         {c.hits.length > 0 && (
                           <p className="mt-0.5 text-xs text-amber-800">
-                            지적 {c.hits.length}건 — {c.hits.slice(0, 5).map((h) => h.text).join(', ')}
-                            {c.hits.length > 5 && ' …'}
+                            지적 {c.hits.length}건 —{" "}
+                            {c.hits
+                              .slice(0, 5)
+                              .map((h) => h.text)
+                              .join(", ")}
+                            {c.hits.length > 5 && " …"}
                           </p>
                         )}
                         {c.match.length === 0 && (
@@ -1011,15 +1212,18 @@ export default function App() {
           <div className="flex flex-col md:flex-row md:items-start justify-between gap-5">
             <div className="space-y-1.5">
               <p className="text-base font-bold text-white">
-                보도자료 공공언어 검증{' '}
-                <span className="text-slate-400 font-medium">전북특별자치도교육청</span>
+                보도자료 공공언어 검증{" "}
+                <span className="text-slate-400 font-medium">
+                  전북특별자치도교육청
+                </span>
               </p>
               <p className="text-sm text-slate-300">
-                공식 평가 결과가 아닙니다. 최종 판단은 작성 부서와 대변인실이 합니다.
+                공식 평가 결과가 아닙니다. 최종 판단은 작성 부서와 대변인실이
+                합니다.
               </p>
               <p className="text-sm text-slate-300">
-                원고와 올린 파일은 브라우저 안에서만 처리하며, AI 검토를 켠 경우에만 지정한 사업자에게
-                전송됩니다.
+                원고와 올린 파일은 브라우저 안에서만 처리하며, AI 검토를 켠
+                경우에만 지정한 사업자에게 전송됩니다.
               </p>
             </div>
             <div className="text-sm text-slate-300 md:text-right space-y-1">
@@ -1027,9 +1231,14 @@ export default function App() {
                 <ScrollText className="w-3.5 h-3.5" aria-hidden="true" />
                 근거 자료
               </p>
-              <p>2026년 공공기관등 공문서등 평가 설명회 자료(문체부·국립국어원)</p>
+              <p>
+                2026년 공공기관등 공문서등 평가 설명회 자료(문체부·국립국어원)
+              </p>
               <p>개정판 한눈에 알아보는 공공언어 바로 쓰기(국립국어원, 2022)</p>
-              <p>2026년 용이성 평가용 용어 목록 {DATA_COUNTS.terms.toLocaleString()}개</p>
+              <p>
+                2026년 용이성 평가용 용어 목록{" "}
+                {DATA_COUNTS.terms.toLocaleString()}개
+              </p>
               <p>보도자료 양식: 전북특별자치도교육청 공식 hwpx 서식</p>
             </div>
           </div>
@@ -1058,19 +1267,19 @@ function ScrollToTopButton() {
   useEffect(() => {
     const onScroll = () => setShow(window.scrollY > 400);
     onScroll();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
   return (
     <button
       type="button"
-      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+      onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
       aria-label="맨 위로 이동"
       className={`fixed bottom-6 right-6 z-40 flex items-center gap-1.5 px-4 py-3
                   rounded-full border border-slate-300 bg-white text-slate-700 shadow-lg
                   text-sm font-bold hover:bg-blue-600 hover:border-blue-600 hover:text-white
-                  transition-all ${show ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3 pointer-events-none'}`}
+                  transition-all ${show ? "opacity-100 translate-y-0" : "opacity-0 translate-y-3 pointer-events-none"}`}
     >
       <ArrowUp className="w-4 h-4" aria-hidden="true" />
       <span className="hidden sm:inline">맨 위로</span>
