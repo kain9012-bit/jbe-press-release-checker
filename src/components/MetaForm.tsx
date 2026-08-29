@@ -5,8 +5,6 @@ interface Props {
   onChange: (v: ReleaseMeta) => void;
   /** 제목·부제는 본문과 함께 검사하므로 결과 화면에서는 읽기 전용으로 보여 준다 */
   lockTitle?: boolean;
-  /** 제목만 감춘다. 입력 화면에서는 위 상자의 첫 줄이 제목이다 */
-  hideTitle?: boolean;
 }
 
 const L = 'mb-1 block text-sm font-bold text-slate-700';
@@ -15,7 +13,7 @@ const I =
 const TA =
   'w-full px-3 py-2 rounded-md border border-slate-300 bg-white text-sm font-semibold text-slate-800 outline-none focus:border-blue-600';
 
-export default function MetaForm({ value, onChange, lockTitle, hideTitle }: Props) {
+export default function MetaForm({ value, onChange, lockTitle }: Props) {
   const set = (k: keyof ReleaseMeta, v: string | string[]) => onChange({ ...value, [k]: v });
 
   return (
@@ -73,20 +71,18 @@ export default function MetaForm({ value, onChange, lockTitle, hideTitle }: Prop
 
       {!lockTitle && (
         <>
-          {!hideTitle && (
-            <div>
-              <label className={L} htmlFor="m-title">
-                제목
-              </label>
-              <input
-                id="m-title"
-                className={I}
-                value={value.제목}
-                onChange={(e) => set('제목', e.target.value)}
-                placeholder="전북교육청, ○○○ 추진"
-              />
-            </div>
-          )}
+          <div>
+            <label className={L} htmlFor="m-title">
+              제목
+            </label>
+            <input
+              id="m-title"
+              className={I}
+              value={value.제목}
+              onChange={(e) => set('제목', e.target.value)}
+              placeholder="전북교육청, ○○○ 추진"
+            />
+          </div>
           <div>
             <label className={L} htmlFor="m-sub">
               부제 <span className="font-normal text-slate-500">한 줄에 하나</span>

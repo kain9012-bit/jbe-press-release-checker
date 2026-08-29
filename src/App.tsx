@@ -6,16 +6,12 @@ import {
   Check,
   ClipboardCheck,
   Copy,
-  Download,
   FileDown,
   FileUp,
-  Languages,
   Loader2,
   RotateCcw,
   ScrollText,
-  SpellCheck,
   Sparkles,
-  MessagesSquare,
   Wand2,
   Undo2,
   Eye,
@@ -30,7 +26,6 @@ import MetaForm from "./components/MetaForm";
 import {
   Badge,
   SectionTitle,
-  Stat,
   Notice,
   BTN_PRIMARY,
   BTN_GHOST,
@@ -75,12 +70,6 @@ const AXIS_TONE: Record<Axis, Tone> = {
   정확성: "red",
   소통성: "amber",
 };
-const AXIS_ICON: Record<Axis, React.ReactNode> = {
-  용이성: <Languages className="w-3.5 h-3.5" aria-hidden="true" />,
-  정확성: <SpellCheck className="w-3.5 h-3.5" aria-hidden="true" />,
-  소통성: <MessagesSquare className="w-3.5 h-3.5" aria-hidden="true" />,
-};
-
 const CFG_KEY = "prc.ai.config.v2";
 const CFG_KEY_OLD = "prc.ai.config.v1";
 
@@ -144,6 +133,8 @@ export default function App() {
     msg: string;
   } | null>(null);
   const [reading, setReading] = useState(false);
+  /** 검토 결과가 나온 뒤에는 입력 띠를 접어 둔다 */
+  const [showInput, setShowInput] = useState(true);
 
   const [result, setResult] = useState<AnalyzeResult | null>(null);
   const [source, setSource] = useState("");
@@ -330,8 +321,8 @@ export default function App() {
         담당: r.담당 || m.담당,
         담당자: r.담당자 || m.담당자,
       }));
-      // 상자에는 제목과 본문만 넣는다. 부제는 ‘보도자료 정보’ 칸이 맡는다
-      // (상자에 같이 넣으면 첫 줄 다음부터는 전부 본문 문단으로 잡힌다).
+      // 상자에는 제목과 본문만 넣는다. 부제·머리말은 따로 들고 있다가
+      // hwpx 를 만들 때 되돌려 놓는다 (상자에 같이 넣으면 전부 본문으로 잡힌다).
       setBody(r.본문);
       setText([r.제목, ...r.본문].join("\n"));
       setFileNote({
@@ -339,7 +330,7 @@ export default function App() {
         msg:
           `${file.name} — ${r.서식}, 제목과 본문 ${r.본문.length}문단을 넣었습니다.` +
           (r.부제.length ? ` 부제 ${r.부제.length}줄과` : "") +
-          " 배포일·부서·담당자는 아래 ‘보도자료 정보’에 채웠습니다.",
+          " 배포일·부서·담당자는 그대로 hwpx 머리말에 들어갑니다.",
       });
     } catch (e) {
       setFileNote({
@@ -361,6 +352,7 @@ export default function App() {
     setAiSummary("");
     setAiState("idle");
     setAiError("");
+    setShowInput(true);
     setText("");
     setBody([]);
     setMeta(EMPTY_META);
@@ -388,7 +380,7 @@ export default function App() {
     if (!t) return;
 
     // 상자가 유일한 출처다. 첫 줄이 제목, 나머지 줄이 본문 문단.
-    // 부제와 머리말은 ‘보도자료 정보’ 칸에서 온다.
+    // 부제와 머리말은 따로 들고 있는 값에서 온다.
     const split = splitPastedText(t);
     const nextMeta: ReleaseMeta = {
       ...meta,
@@ -413,6 +405,7 @@ export default function App() {
     setActive(null);
     setExportError("");
     jumpToResult.current = true;
+    setShowInput(false);
 
     if (withAi) {
       await askAi(src, r.findings);
@@ -611,7 +604,34 @@ export default function App() {
         {tab === "cases" && <CasesView />}
 
         {/* ------------------ 입력 ------------------ */}
-        {tab === "check" && (
+        {tab === "check" && result && !showInput && (
+          <section
+            className="relative left-1/2 w-screen -translate-x-1/2 -mt-6 mb-6
+                       px-4 sm:px-6 lg:px-8 py-3
+                       bg-blue-50 border-b border-blue-100"
+          >
+            <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+              <span className="text-sm text-slate-700">
+                초안{" "}
+                <b className="text-slate-900">
+                  {result.wordCount.toLocaleString()}어절 ·{" "}
+                  {result.charCount.toLocaleString()}자
+                </b>
+              </span>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setShowInput(true)} className={BTN_GHOST}>
+                  초안 고치기
+                </button>
+                <button type="button" onClick={reset} className={BTN_GHOST}>
+                  <RotateCcw className="w-4 h-4" aria-hidden="true" />
+                  처음부터
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {tab === "check" && (!result || showInput) && (
           <div className="space-y-8 pb-12">
             {/* ── 입력 띠 ── */}
             <section
@@ -717,7 +737,7 @@ export default function App() {
                         <span className="font-bold text-blue-800">
                           {reading
                             ? "한글 파일을 읽는 중…"
-                            : "여기에 놓으면 제목·본문과 보도자료 정보를 채웁니다"}
+                            : "여기에 놓으면 제목·본문과 담당자 정보를 채웁니다"}
                         </span>
                       </div>
                     )}
@@ -725,8 +745,7 @@ export default function App() {
 
                   <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
                     <span>
-                      첫 줄을 제목으로, 나머지 줄을 본문 문단으로 봅니다. 아래
-                      ‘보도자료 정보’에서 고칠 수 있습니다.
+                      첫 줄을 제목으로, 나머지 줄을 본문 문단으로 봅니다.
                     </span>
                     <button
                       type="button"
@@ -825,45 +844,6 @@ export default function App() {
               </div>
             </section>
 
-            {/* ── 보도자료 정보 ── */}
-            <section className="space-y-3">
-              <SectionTitle desc="hwpx 머리말 표에 그대로 들어갑니다. 한글 파일을 놓으면 자동으로 채워집니다">
-                보도자료 정보
-              </SectionTitle>
-              <div className={`${CARD} p-5`}>
-                <MetaForm value={meta} onChange={setMeta} hideTitle />
-                <p className="mt-3 text-xs text-slate-500">
-                  제목은 위 상자의 첫 줄을 그대로 씁니다.
-                </p>
-              </div>
-            </section>
-
-            {/* ── 무엇을 보는지 ── */}
-            <section className="space-y-3">
-              <SectionTitle desc="국립국어원 2026년 공문서등 평가 기준">
-                무엇을 보나
-              </SectionTitle>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <Stat
-                  icon={AXIS_ICON.용이성}
-                  label="용이성"
-                  value={`${DATA_COUNTS.terms.toLocaleString()}개`}
-                  sub="평가용 용어 목록 + 행정용어 100개 + 일본어 투 50개로 외국 글자·외래어를 대조"
-                />
-                <Stat
-                  icon={AXIS_ICON.정확성}
-                  label="정확성"
-                  value={`${DATA_COUNTS.patterns}개`}
-                  sub="두음 법칙·외래어 표기·띄어쓰기·괄호 뒤 조사·번역 투·이중 피동 규칙"
-                />
-                <Stat
-                  icon={AXIS_ICON.소통성}
-                  label="소통성"
-                  value="권위·차별"
-                  sub="고압적 표현과 차별적 표현, 지나치게 긴 문장"
-                />
-              </div>
-            </section>
           </div>
         )}
 
@@ -900,33 +880,11 @@ export default function App() {
                         : "AI 문맥 검토도 받기"}
                     </button>
                   )}
-                  <button type="button" onClick={reset} className={BTN_GHOST}>
-                    <RotateCcw className="w-4 h-4" aria-hidden="true" />
-                    처음부터
-                  </button>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {AXES.map((a) => (
-                  <Stat
-                    key={a}
-                    icon={AXIS_ICON[a]}
-                    label={a}
-                    value={`${findings.filter((f) => f.axis === a).length}건`}
-                    bar={{
-                      ratio: result.byAxis[a].rate * 10,
-                      tone: AXIS_TONE[a],
-                    }}
-                    sub={`어절 수 대비 ${result.byAxis[a].rate.toFixed(2)}%`}
-                  />
-                ))}
-              </div>
-
               <p className="text-xs text-slate-500">
-                실제 평가는 어절 수 대비 오류 비율로 점수를 매깁니다(용이성 60%,
-                정확성 30%). 여기 나오는 비율은 자동 검사로 걸린 것만 센
-                참고치이고, 실제 배점 산식과는 다릅니다.
+                자동 검사로 걸린 것만 센 것이고, 실제 평가 점수가 아닙니다.
               </p>
 
               {aiState === "fail" && (
@@ -1202,21 +1160,6 @@ export default function App() {
                   </button>
                   <button
                     type="button"
-                    onClick={() =>
-                      saveBlob(
-                        "보도자료_수정본.txt",
-                        new Blob([revised], {
-                          type: "text/plain;charset=utf-8",
-                        }),
-                      )
-                    }
-                    className={BTN_GHOST}
-                  >
-                    <Download className="w-4 h-4" aria-hidden="true" />
-                    txt
-                  </button>
-                  <button
-                    type="button"
                     onClick={downloadHwpx}
                     className={BTN_PRIMARY}
                   >
@@ -1236,7 +1179,7 @@ export default function App() {
                   tone="amber"
                   title="제목·부제 위치를 자동으로 되돌리지 못했습니다"
                 >
-                  수정본의 문단 수가 원문과 다릅니다. 아래 머리말 정보에서
+                  수정본의 문단 수가 원문과 다릅니다. 아래 ‘hwpx 머리말 정보’에서
                   확인한 뒤 내려받으세요.
                 </Notice>
               )}
@@ -1341,21 +1284,6 @@ export default function App() {
                       <Copy className="w-4 h-4" aria-hidden="true" />
                     )}
                     복사
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      saveBlob(
-                        "보도자료_점검표.txt",
-                        new Blob([checklistText], {
-                          type: "text/plain;charset=utf-8",
-                        }),
-                      )
-                    }
-                    className={BTN_GHOST}
-                  >
-                    <Download className="w-4 h-4" aria-hidden="true" />
-                    내려받기
                   </button>
                 </div>
               </div>
