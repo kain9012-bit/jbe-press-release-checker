@@ -39,6 +39,7 @@ import {
   buildRevisedParts,
   defaultDecisions,
   isApplicable,
+  isRuleChecked,
   replacementFor,
   DATA_COUNTS,
   type AnalyzeResult,
@@ -549,9 +550,14 @@ export default function App() {
       CHECKLIST.map((c) => ({
         ...c,
         hits: findings.filter((f) => c.match.some((m) => f.sub.includes(m))),
+        // 규칙이 이 항목을 보기는 하는지. 손으로 적어 두면 규칙을 고쳤을 때
+        // 표가 조용히 거짓말을 하므로, 실제 규칙 목록에서 따진다.
+        seen: isRuleChecked(c.match),
       })),
     [findings],
   );
+  const seenItems = checklist.filter((c) => c.seen);
+  const blindItems = checklist.filter((c) => !c.seen);
 
   const checklistText = useMemo(() => {
     const lines = [
@@ -560,26 +566,30 @@ export default function App() {
       `제목: ${meta.제목}`,
       `분량: ${result?.wordCount ?? 0}어절 / ${result?.charCount ?? 0}자`,
       "",
-      ...AXES.map((a) => {
-        const b = result?.byAxis[a];
-        return `[${a}] 지적 ${findings.filter((f) => f.axis === a).length}건 · 어절 수 대비 ${
-          b ? b.rate.toFixed(2) : "0.00"
-        }%`;
-      }),
-      "",
-      "── 공공언어의 요건 점검 ──",
-      ...checklist.map(
-        (c) =>
-          `[${c.match.length === 0 ? "–" : c.hits.length === 0 ? "○" : "△"}] ${c.area}·${c.group} ${
-            c.question
-          }${c.hits.length ? `  (지적 ${c.hits.length}건)` : ""}`,
+      // 어절 수 대비 비율은 빼 둔다. 실제 배점 산식이 공개돼 있지 않아 참고치일 뿐인데,
+      // 번역 투처럼 사람이 판단할 것은 비율에서 빠지다 보니 ‘6건인데 0.00%’ 같은
+      // 고장 난 줄이 나왔다. 셈이 틀린 것은 아니지만 읽는 사람에게는 그냥 오류로 보인다.
+      ...AXES.map(
+        (a) => `[${a}] 지적 ${findings.filter((f) => f.axis === a).length}건`,
       ),
       "",
-      "※ ○ 는 자동 검사에서 걸린 것이 없다는 뜻이고, 지켰다는 보증이 아닙니다.",
-      "※ 단락 구성·정보의 양과 배열·시각적 편의는 자동 검사 대상이 아니므로 작성자가 직접 확인하세요.",
+      `── 규칙이 본 것 (${seenItems.length}항목) ──`,
+      ...seenItems.map(
+        (c) =>
+          `[${c.hits.length === 0 ? "걸림 없음" : `${c.hits.length}건`}] ${c.area}·${c.group} ${
+            c.question
+          }` + (c.partial ? `\n    다만 — ${c.partial}.` : ""),
+      ),
+      "",
+      `── 규칙이 못 보는 것 (${blindItems.length}항목) — 작성자가 직접 읽어 보세요 ──`,
+      ...blindItems.map(
+        (c) => `[ ] ${c.area}·${c.group} ${c.question}` + (c.byEye ? `\n    ${c.byEye}` : ""),
+      ),
+      "",
+      "※ ‘걸림 없음’ 은 규칙에 안 걸렸다는 뜻이지, 그 항목을 지켰다는 뜻이 아닙니다.",
     ];
     return lines.join("\n");
-  }, [checklist, findings, result, meta.제목]);
+  }, [seenItems, blindItems, findings, result, meta.제목]);
 
   const readyToRun = text.trim().length > 0;
 
@@ -1267,7 +1277,7 @@ export default function App() {
             <section className="space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <SectionTitle desc="공공언어의 요건 15항목">
-                  자동 생성 점검표
+                  점검표
                 </SectionTitle>
                 <div className="flex gap-2">
                   <button
@@ -1288,29 +1298,29 @@ export default function App() {
                 </div>
               </div>
 
+              {/*
+                ○ 를 쓰지 않는다.
+                예전에는 규칙이 아예 안 보는 항목에도 ○ 가 붙었다. 아래에 ‘지켰다는
+                보증이 아닙니다’ 라고 적어 두었지만 사람은 동그라미를 보면 통과로 읽는다.
+                자가검증 도구가 잘못 ‘괜찮다’ 고 말하는 것은 아무 말도 안 하느니만 못하다.
+                그래서 규칙이 본 것과 못 보는 것을 아예 갈라 놓는다.
+              */}
               <div className={`${CARD} overflow-hidden`}>
-                <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs text-slate-500">
-                  <ClipboardCheck className="w-3.5 h-3.5" aria-hidden="true" />○
-                  는 자동 검사에서 걸린 것이 없다는 뜻이고, 지켰다는 보증이
-                  아닙니다
+                <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-bold text-slate-600">
+                  <ClipboardCheck className="w-3.5 h-3.5" aria-hidden="true" />
+                  규칙이 본 것 {seenItems.length}항목
                 </div>
                 <ul className="divide-y divide-slate-100">
-                  {checklist.map((c) => (
+                  {seenItems.map((c) => (
                     <li key={c.id} className="flex items-start gap-3 px-5 py-3">
                       <span
-                        className={`mt-0.5 w-5 h-5 shrink-0 rounded-full flex items-center justify-center text-xs font-bold ${
-                          c.match.length === 0
-                            ? "bg-slate-100 text-slate-400"
-                            : c.hits.length === 0
-                              ? "bg-green-50 text-green-700"
-                              : "bg-amber-50 text-amber-800"
+                        className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-xs font-bold ${
+                          c.hits.length === 0
+                            ? "bg-slate-100 text-slate-500"
+                            : "bg-amber-50 text-amber-800"
                         }`}
                       >
-                        {c.match.length === 0
-                          ? "–"
-                          : c.hits.length === 0
-                            ? "○"
-                            : "△"}
+                        {c.hits.length === 0 ? "걸림 없음" : `${c.hits.length}건`}
                       </span>
                       <div className="min-w-0">
                         <p className="text-sm text-slate-800">
@@ -1321,7 +1331,6 @@ export default function App() {
                         </p>
                         {c.hits.length > 0 && (
                           <p className="mt-0.5 text-xs text-amber-800">
-                            지적 {c.hits.length}건 —{" "}
                             {c.hits
                               .slice(0, 5)
                               .map((h) => h.text)
@@ -1329,12 +1338,43 @@ export default function App() {
                             {c.hits.length > 5 && " …"}
                           </p>
                         )}
-                        {c.match.length === 0 && (
+                        {c.partial && (
                           <p className="mt-0.5 text-xs text-slate-500">
-                            자동 검사 대상이 아닙니다. 작성자가 직접 확인하세요.
+                            다만 — {c.partial}.
                           </p>
                         )}
                       </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className={`${CARD} overflow-hidden`}>
+                <div className="flex items-start gap-2 border-b border-slate-200 bg-amber-50 px-5 py-3 text-xs text-amber-900">
+                  <AlertTriangle
+                    className="mt-0.5 w-3.5 h-3.5 shrink-0"
+                    aria-hidden="true"
+                  />
+                  <span>
+                    <b className="font-bold">
+                      규칙이 못 보는 것 {blindItems.length}항목
+                    </b>{" "}
+                    — 검사를 안 한 것이지 잘 썼다는 뜻이 아닙니다. 이 {blindItems.length}가지는
+                    작성자가 직접 읽어 보셔야 합니다.
+                  </span>
+                </div>
+                <ul className="divide-y divide-slate-100">
+                  {blindItems.map((c) => (
+                    <li key={c.id} className="px-5 py-3">
+                      <p className="text-sm text-slate-800">
+                        <span className="mr-2 text-xs font-bold text-slate-400">
+                          {c.area}·{c.group}
+                        </span>
+                        {c.question}
+                      </p>
+                      {c.byEye && (
+                        <p className="mt-0.5 text-xs text-slate-600">{c.byEye}</p>
+                      )}
                     </li>
                   ))}
                 </ul>

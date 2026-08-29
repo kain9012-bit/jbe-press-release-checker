@@ -15,6 +15,10 @@ export interface CheckItem {
   question: string;
   /** 이 항목을 건드리는 지적의 sub 앞부분 */
   match: string[];
+  /** 규칙이 이 항목의 일부만 볼 때, 못 보는 쪽이 무엇인지 */
+  partial?: string;
+  /** 규칙이 못 보는 항목에서 사람이 눈으로 무엇을 볼지 */
+  byEye?: string;
 }
 
 /**
@@ -42,6 +46,7 @@ export const CHECKLIST: CheckItem[] = [
     group: '표기의 정확성',
     question: '외래어 표기법과 국어의 로마자 표기법을 지켰는가?',
     match: ['표기의 정확성 — 외래어 표기법'],
+    partial: '외래어 표기만 봅니다. 사람·땅 이름의 로마자 표기는 못 봅니다',
   },
   {
     id: 'A4',
@@ -63,12 +68,14 @@ export const CHECKLIST: CheckItem[] = [
       '호응',
       '비문',
     ],
+    partial: '번역 투·피동·높임·괄호 뒤 조사까지만 봅니다. 주술 호응과 비문은 AI 검토를 켜야 봅니다',
   },
   {
     id: 'A6',
     area: '정확성',
     group: '표현의 정확성',
     question: '단락 구성을 짜임새 있게 하였는가?',
+    byEye: '한 문단에 한 가지 이야기만 담겼는지, 문단마다 첫 문장이 그 문단의 요지인지 보세요.',
     match: ['단락'],
   },
   {
@@ -77,6 +84,7 @@ export const CHECKLIST: CheckItem[] = [
     group: '공공성',
     question: '공공언어로서의 품격을 갖추었는가?',
     match: ['공공성'],
+    partial: '아래 두 항목(권위적·차별적 표현)에 걸린 것을 그대로 옮겨 놓은 것입니다',
   },
   {
     id: 'B2',
@@ -97,6 +105,7 @@ export const CHECKLIST: CheckItem[] = [
     area: '소통성',
     group: '정보성',
     question: '정보를 적절한 형식으로 제시하였는가?',
+    byEye: '일정·대상·장소처럼 여러 항목이 나열되는 것을 줄글로 늘어놓지 않았는지 보세요. 표나 목록이 나을 때가 많습니다.',
     match: ['정보성'],
   },
   {
@@ -104,6 +113,7 @@ export const CHECKLIST: CheckItem[] = [
     area: '소통성',
     group: '정보성',
     question: '정보의 양을 적절하게 제시하였는가?',
+    byEye: '누가·언제·어디서·무엇을·왜가 다 있는지, 반대로 기자가 안 쓸 내부 사정까지 적지 않았는지 보세요.',
     match: ['정보량'],
   },
   {
@@ -111,6 +121,7 @@ export const CHECKLIST: CheckItem[] = [
     area: '소통성',
     group: '정보성',
     question: '정보의 배열이 적절하게 이루어졌는가?',
+    byEye: '가장 중요한 것이 첫 문단에 왔는지 보세요. 보도자료는 두괄식입니다.',
     match: ['배열'],
   },
   {
@@ -136,6 +147,7 @@ export const CHECKLIST: CheckItem[] = [
     area: '소통성',
     group: '용이성',
     question: '시각적 편의를 고려하여 작성하였는가?',
+    byEye: '제목·부제·본문 글머리표가 한눈에 갈라지는지, 사진이나 붙임 자료의 자리가 적절한지 보세요.',
     match: [],
   },
 ];
