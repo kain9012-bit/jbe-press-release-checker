@@ -19,10 +19,16 @@ const PH_DIST = '배포일: 2026. 7. 6. (월)';
 const PH_EMBARGO = '보도시점: 배포 즉시 가능';
 const PH_MEDIA = ' 사진(0) 영상(0)';
 const PH_DEPT = '000000과';
-const PEOPLE_PH: [string, string][] = [
-  ['과장', '김xx'],
-  ['담당', '이xx'],
-  ['장학사', '박xx'],
+/**
+ * 문의 표의 세 칸.
+ *   ph      — 양식에 들어 있는 직위 자리표시
+ *   label   — 실제로 찍을 직위 (양식은 ‘장학사’ 지만 쓰는 이름은 ‘담당자’ 다)
+ *   namePh  — 이름 자리표시
+ */
+const PEOPLE_PH: { ph: string; label: string; namePh: string }[] = [
+  { ph: '과장', label: '과장', namePh: '김xx' },
+  { ph: '담당', label: '담당', namePh: '이xx' },
+  { ph: '장학사', label: '담당자', namePh: '박xx' },
 ];
 const PH_TEL = '063-239-3xxx';
 
@@ -41,7 +47,7 @@ export interface ReleaseMeta {
   부서: string;
   과장: string;
   담당: string;
-  장학사: string;
+  담당자: string;
 }
 
 export const EMPTY_META: ReleaseMeta = {
@@ -54,7 +60,7 @@ export const EMPTY_META: ReleaseMeta = {
   부서: '',
   과장: '',
   담당: '',
-  장학사: '',
+  담당자: '',
 };
 
 /* ------------------------------------------------------------------ */
@@ -147,13 +153,14 @@ function fillSection(xml: string, meta: ReleaseMeta, body: string[]): string {
 
   xml = replaceT(xml, PH_DEPT, meta.부서);
 
-  const raws = [meta.과장, meta.담당, meta.장학사];
-  PEOPLE_PH.forEach(([rolePh, namePh], i) => {
+  const raws = [meta.과장, meta.담당, meta.담당자];
+  PEOPLE_PH.forEach(({ ph, label, namePh }, i) => {
     const [name, tel] = splitPerson(raws[i]);
     xml = replaceT(xml, namePh, name);
     // 전화번호 칸 세 개를 순서대로 하나씩 채운다
     xml = xml.replace(`<hp:t>${PH_TEL}</hp:t>`, `<hp:t>${xmlEscape(tel)}</hp:t>`);
-    if (!name && !tel) xml = replaceT(xml, rolePh, '');
+    // 사람이 없으면 직위 칸도 비운다
+    xml = replaceT(xml, ph, name || tel ? label : '');
   });
 
   xml = replaceT(xml, PH_TITLE, meta.제목);

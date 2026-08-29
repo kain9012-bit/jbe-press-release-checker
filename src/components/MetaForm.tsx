@@ -119,7 +119,7 @@ export default function MetaForm({ value, onChange, lockTitle, hideTitle }: Prop
           [
             ['과장', '김○○ | 063-239-3000'],
             ['담당', '이○○ | 063-239-3001'],
-            ['장학사', '박○○ | 063-239-3002'],
+            ['담당자', '박○○ | 063-239-3002'],
           ] as const
         ).map(([k, ph]) => (
           <div key={k}>

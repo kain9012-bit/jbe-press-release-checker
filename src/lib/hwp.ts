@@ -531,7 +531,7 @@ export interface PressRelease {
   부서: string;
   과장: string;
   담당: string;
-  장학사: string;
+  담당자: string;
   서식: string;
 }
 
@@ -551,7 +551,7 @@ export function parsePressRelease(data: Uint8Array): PressRelease {
     부서: '',
     과장: '',
     담당: '',
-    장학사: '',
+    담당자: '',
     서식: '',
   };
 
@@ -623,21 +623,21 @@ export function parsePressRelease(data: Uint8Array): PressRelease {
   r.부서 = contacts.부서;
   const join = (p: { name: string; tel: string }) =>
     [p.name, p.tel].filter(Boolean).join(' | ');
-  // 서식의 세 칸(과장·담당·장학사)에 가까운 쪽으로 넣는다.
+  // 서식의 세 칸(과장·담당·담당자)에 넣는다.
+  // 과장급은 첫 칸으로, 나머지는 나온 순서대로 담당 → 담당자.
   const rest: string[] = [];
   const 관리직 = ['과장', '국장', '관장', '센터장', '실장', '부장', '교육장'];
-  const 장학직 = ['장학사', '장학관'];
   for (const person of contacts.사람) {
     const line = join(person);
     if (!line) continue;
     if (관리직.includes(person.role) && !r.과장) r.과장 = line;
-    else if (장학직.includes(person.role) && !r.장학사) r.장학사 = line;
     else if (!r.담당) r.담당 = line;
+    else if (!r.담당자) r.담당자 = line;
     else rest.push(line);
   }
   for (const line of rest) {
     if (!r.담당) r.담당 = line;
-    else if (!r.장학사) r.장학사 = line;
+    else if (!r.담당자) r.담당자 = line;
   }
 
   r.서식 = fieldValue(paras, '배포일') ? '2026-07 이후' : '이전 서식';
