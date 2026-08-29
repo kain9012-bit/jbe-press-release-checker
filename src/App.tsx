@@ -50,6 +50,7 @@ import {
   reviewWithAi,
   fillBlanks,
   tenseChanged,
+  isConfigured,
   type AiConfig,
   type BlankTarget,
 } from "./lib/ai";
@@ -216,7 +217,7 @@ export default function App() {
    */
   async function fillWithAi() {
     if (blanks.length === 0) return;
-    if (!cfg.apiKey) {
+    if (!isConfigured(cfg)) {
       setAfterKey('fill');
       setShowCfg(true);
       return;
@@ -475,7 +476,7 @@ export default function App() {
   /** 결과 화면에서 뒤늦게 AI 검토를 붙일 때 */
   function addAi() {
     if (!result) return;
-    if (!cfg.apiKey) {
+    if (!isConfigured(cfg)) {
       setAfterKey("add");
       setShowCfg(true);
       return;
@@ -816,7 +817,7 @@ export default function App() {
                       type="button"
                       onClick={() => {
                         if (!readyToRun) return;
-                        if (!cfg.apiKey) {
+                        if (!isConfigured(cfg)) {
                           setAfterKey("run");
                           setShowCfg(true);
                           return;

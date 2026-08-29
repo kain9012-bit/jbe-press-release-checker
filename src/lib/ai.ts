@@ -1,11 +1,33 @@
 import type { Finding } from './analyze';
 
-export type Provider = 'anthropic' | 'openai' | 'gemini';
+export type Provider = 'anthropic' | 'openai' | 'gemini' | 'compat';
 
 export interface AiConfig {
   provider: Provider;
   apiKey: string;
   model: string;
+  /** OpenAI 호환 서버 주소. provider 가 'compat' 일 때만 쓴다. */
+  baseUrl?: string;
+}
+
+/** 물어볼 준비가 됐는지. 사내 서버는 키를 요구하지 않는 경우가 많다. */
+export function isConfigured(cfg: AiConfig): boolean {
+  return cfg.provider === 'compat'
+    ? Boolean(cfg.baseUrl?.trim())
+    : Boolean(cfg.apiKey.trim());
+}
+
+/**
+ * 사내 서버 주소를 실제 부를 주소로 바꾼다.
+ *
+ * 사람마다 적는 모양이 다르다. 'http://127.0.0.1:8000' 도, 뒤에 '/v1' 을 붙인 것도,
+ * '/v1/chat/completions' 까지 통째로 적은 것도 다 받아 준다.
+ */
+export function compatUrl(baseUrl: string, tail: 'chat/completions' | 'models'): string {
+  let b = (baseUrl ?? '').trim().replace(/\/+$/, '');
+  b = b.replace(/\/chat\/completions$/, '').replace(/\/+$/, '');
+  if (!/\/v\d+$/.test(b)) b += '/v1';
+  return `${b}/${tail}`;
 }
 
 /**
@@ -17,18 +39,21 @@ export const DEFAULT_MODEL: Record<Provider, string> = {
   anthropic: 'claude-sonnet-4-5-20250929',
   openai: 'gpt-4o-mini',
   gemini: 'gemini-3.6-flash',
+  compat: '',
 };
 
 export const PROVIDER_LABEL: Record<Provider, string> = {
   anthropic: '앤트로픽 클로드',
   openai: '오픈에이아이',
   gemini: '구글 제미나이',
+  compat: 'OpenAI 호환 (사내·오프라인 LLM)',
 };
 
 export const KEY_HELP: Record<Provider, string> = {
   anthropic: 'console.anthropic.com 에서 발급한 키(sk-ant-…)',
   openai: 'platform.openai.com 에서 발급한 키(sk-…)',
   gemini: 'aistudio.google.com 에서 발급한 키(AIza…)',
+  compat: '서버가 키를 요구하지 않으면 비워 두셔도 됩니다',
 };
 
 const SYSTEM = `당신은 대한민국 공공기관의 보도자료를 국립국어원 공문서등 평가 기준으로 검토하는 국어 전문가다.
@@ -83,19 +108,64 @@ async function callAnthropic(cfg: AiConfig, user: string, system: string = SYSTE
   return (data.content ?? []).map((c: { text?: string }) => c.text ?? '').join('');
 }
 
+/** 키가 없으면 Authorization 을 아예 안 붙인다. 사내 서버는 키를 안 받는 일이 흔하다. */
+function openAiHeaders(cfg: AiConfig): Record<string, string> {
+  const h: Record<string, string> = { 'content-type': 'application/json' };
+  if (cfg.apiKey.trim()) h.authorization = `Bearer ${cfg.apiKey.trim()}`;
+  return h;
+}
+
+/**
+ * 브라우저가 서버에 닿지도 못했을 때는 이유를 알려 주지 않고 그냥 'Failed to fetch' 라고만 한다.
+ * 사내 서버를 쓸 때 그 대부분은 CORS 아니면 서버가 안 떠 있는 것이라, 짚어 준다.
+ */
+async function fetchCompat(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (e) {
+    throw new Error(
+      `서버에 닿지 못했습니다 — ${url}\n` +
+        '① 서버가 떠 있는지 ② 주소와 포트가 맞는지 ③ 그 서버가 이 웹페이지의 접속을 허용(CORS)하는지 확인해 주세요.\n' +
+        '(vLLM 은 --allowed-origins "*", Ollama 는 OLLAMA_ORIGINS="*" 로 켭니다.)\n' +
+        (e instanceof Error ? e.message : String(e)),
+    );
+  }
+}
+
+const openAiChatUrl = (cfg: AiConfig) =>
+  cfg.provider === 'compat'
+    ? compatUrl(cfg.baseUrl ?? '', 'chat/completions')
+    : 'https://api.openai.com/v1/chat/completions';
+
+/**
+ * OpenAI Chat Completions 규격으로 부른다. 오픈에이아이와 사내 호환 서버가 같이 쓴다.
+ *
+ * `response_format` 은 오픈에이아이는 받지만 사내 서버(올라마·옛 vLLM 등)는 모르고
+ * 400 을 뱉기도 한다. 한 번 막히면 그것만 빼고 다시 부른다. JSON 을 코드 울타리에
+ * 감싸 보내는 서버도 있는데 그건 `parseJson()` 이 알아서 걷어낸다.
+ */
+/** response_format 을 못 받는 서버로 판명된 주소. 한 번 겪으면 그 뒤로는 안 보낸다. */
+const noJsonMode = new Set<string>();
+
 async function callOpenAI(cfg: AiConfig, user: string, system: string = SYSTEM) {
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
-    body: JSON.stringify({
+  const url = openAiChatUrl(cfg);
+  const body = (json: boolean) =>
+    JSON.stringify({
       model: cfg.model,
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: user },
       ],
-      response_format: { type: 'json_object' },
-    }),
-  });
+      ...(json ? { response_format: { type: 'json_object' } } : {}),
+    });
+
+  const go = cfg.provider === 'compat' ? fetchCompat : fetch;
+  const useJson = !noJsonMode.has(url);
+  let res = await go(url, { method: 'POST', headers: openAiHeaders(cfg), body: body(useJson) });
+  if (useJson && !res.ok && res.status >= 400 && res.status < 500) {
+    noJsonMode.add(url);
+    res = await go(url, { method: 'POST', headers: openAiHeaders(cfg), body: body(false) });
+  }
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   const data = await res.json();
   return data.choices?.[0]?.message?.content ?? '';
@@ -144,9 +214,9 @@ export async function reviewWithAi(
   const raw =
     cfg.provider === 'anthropic'
       ? await callAnthropic(cfg, user)
-      : cfg.provider === 'openai'
-        ? await callOpenAI(cfg, user)
-        : await callGemini(cfg, user);
+      : cfg.provider === 'gemini'
+        ? await callGemini(cfg, user)
+        : await callOpenAI(cfg, user);
 
   const parsed = parseJson(raw);
   const findings: Finding[] = [];
@@ -234,6 +304,18 @@ function rankModels(ids: string[]): string[] {
  * 한 번 불러 보게 해 둔다.
  */
 export async function listModels(cfg: AiConfig): Promise<string[]> {
+  if (cfg.provider === 'compat') {
+    if (!cfg.baseUrl?.trim()) throw new Error('먼저 서버 주소를 넣어 주세요.');
+    const res = await fetchCompat(compatUrl(cfg.baseUrl, 'models'), { headers: openAiHeaders(cfg) });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const data = await res.json();
+    // 사내 서버의 이름은 회사마다 제각각이라 판 번호로 줄 세우는 것이 뜻이 없다. 이름순으로 둔다.
+    return ((data.data ?? []) as { id: string }[])
+      .map((m) => m.id)
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+  }
+
   if (!cfg.apiKey.trim()) throw new Error('먼저 API 키를 넣어 주세요.');
 
   if (cfg.provider === 'gemini') {
@@ -299,14 +381,16 @@ export async function testModel(cfg: AiConfig): Promise<void> {
     return;
   }
 
-  if (cfg.provider === 'openai') {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  if (cfg.provider === 'openai' || cfg.provider === 'compat') {
+    // max_completion_tokens 는 새 이름이고 사내 서버는 옛 이름(max_tokens)만 아는 것이 많다.
+    const go = cfg.provider === 'compat' ? fetchCompat : fetch;
+    const res = await go(openAiChatUrl(cfg), {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
+      headers: openAiHeaders(cfg),
       body: JSON.stringify({
         model: cfg.model,
         messages: [{ role: 'user', content: ping }],
-        max_completion_tokens: 16,
+        ...(cfg.provider === 'compat' ? { max_tokens: 16 } : { max_completion_tokens: 16 }),
       }),
     });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
@@ -380,10 +464,10 @@ export async function fillBlanks(
 
   const raw =
     cfg.provider === 'anthropic'
-      ? await callAnthropic({ ...cfg }, user, FILL_SYSTEM)
-      : cfg.provider === 'openai'
-        ? await callOpenAI({ ...cfg }, user, FILL_SYSTEM)
-        : await callGemini({ ...cfg }, user, FILL_SYSTEM);
+      ? await callAnthropic(cfg, user, FILL_SYSTEM)
+      : cfg.provider === 'gemini'
+        ? await callGemini(cfg, user, FILL_SYSTEM)
+        : await callOpenAI(cfg, user, FILL_SYSTEM);
 
   const parsed = parseJson(raw);
   const out: Record<string, string> = {};
