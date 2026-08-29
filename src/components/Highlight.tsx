@@ -12,10 +12,12 @@ interface Props {
   findings: Finding[];
   activeKey: string | null;
   onPick: (key: string) => void;
+  /** 오른쪽 카드를 눌렀을 때 이 자리로 굴러올 수 있게 자리를 등록해 둔다 */
+  markRefs?: React.MutableRefObject<Record<string, HTMLElement | null>>;
 }
 
 /** 원문에 지적 자리를 칠해서 보여 준다. */
-export default function Highlight({ text, findings, activeKey, onPick }: Props) {
+export default function Highlight({ text, findings, activeKey, onPick, markRefs }: Props) {
   const marks = [...findings].sort((a, b) => a.start - b.start);
   const parts: React.ReactNode[] = [];
   let cursor = 0;
@@ -28,11 +30,14 @@ export default function Highlight({ text, findings, activeKey, onPick }: Props) 
       <button
         key={f.key}
         type="button"
+        ref={(el) => {
+          if (markRefs) markRefs.current[f.key] = el;
+        }}
         onClick={() => onPick(f.key)}
         title={`${f.axis} · ${f.sub}`}
         className={`${TONE[f.axis] ?? 'bg-slate-100'} ${
           active ? 'ring-2 ring-slate-900 ring-offset-1' : ''
-        } cursor-pointer rounded-sm px-[1px] text-left transition-colors`}
+        } cursor-pointer scroll-mt-28 rounded-sm px-[1px] text-left transition-colors`}
       >
         {text.slice(f.start, f.end)}
       </button>,

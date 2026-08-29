@@ -161,6 +161,12 @@ export default function App() {
   const [exportError, setExportError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
+  /** 오른쪽 지적 카드들 (원문에서 누르면 해당 카드로 목록을 굴린다) */
+  const cardRefs = useRef<Record<string, HTMLLIElement | null>>({});
+  /** 원문에서 칠한 자리들 (카드를 누르면 그 자리로 굴린다) */
+  const markRefs = useRef<Record<string, HTMLElement | null>>({});
+  /** 어느 쪽을 눌렀는지. 누른 쪽은 그대로 두고 반대쪽만 굴린다. */
+  const pickedFrom = useRef<"text" | "list" | null>(null);
   /** 검토를 막 끝냈을 때만 결과로 내려간다(체크만 만졌는데 화면이 튀면 안 된다) */
   const jumpToResult = useRef(false);
 
@@ -182,6 +188,22 @@ export default function App() {
     resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [result]);
 
+  /**
+   * 원문에서 칠한 곳을 누르면 오른쪽 목록이 그 카드로 굴러간다. 그 반대도 된다.
+   *
+   * 지적이 열댓 개가 되면 누른 자리의 카드가 목록 저 아래에 있어서 손으로 찾아야 했다.
+   * 누른 쪽은 건드리지 않는다(원문을 눌렀는데 원문이 움직이면 읽던 자리를 잃는다).
+   * block:'nearest' 라서 이미 보이는 것은 굴리지 않는다.
+   */
+  useEffect(() => {
+    if (!active) return;
+    const from = pickedFrom.current;
+    pickedFrom.current = null;
+    if (from === null) return;
+    const el = from === "text" ? cardRefs.current[active] : markRefs.current[active];
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  }, [active]);
+
   const findings = useMemo(
     () =>
       [...(result?.findings ?? []), ...aiFindings].sort(
@@ -199,6 +221,19 @@ export default function App() {
   );
   const revised = useMemo(() => revisedParts.map((p) => p.text).join(""), [revisedParts]);
   const fixedCount = revisedParts.filter((p) => p.from !== undefined).length;
+
+  /**
+   * 원문에서 칠한 곳을 눌렀을 때.
+   *
+   * 거르개가 '정확성' 인데 용이성 지적을 누르면 그 카드는 목록에 아예 없다.
+   * 눌렀는데 아무 일도 안 일어나는 것처럼 보이므로 거르개를 풀어 준다.
+   */
+  function pickFromText(key: string) {
+    const f = findings.find((x) => x.key === key);
+    if (f && filter !== "전체" && f.axis !== filter) setFilter("전체");
+    pickedFrom.current = "text";
+    setActive(key);
+  }
 
   /** 아직 넣을 말이 정해지지 않은 자리 */
   const blanks = useMemo(
@@ -914,7 +949,7 @@ export default function App() {
             {/* 원문 + 지적 */}
             <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]">
               <div className="space-y-3">
-                <SectionTitle desc="칠해진 곳을 누르면 오른쪽 지적과 이어집니다">
+                <SectionTitle desc="칠해진 곳을 누르면 오른쪽 지적으로, 오른쪽 지적을 누르면 이 자리로 옵니다">
                   원문
                 </SectionTitle>
                 <div className={`${CARD} p-5`}>
@@ -922,7 +957,8 @@ export default function App() {
                     text={source}
                     findings={findings}
                     activeKey={active}
-                    onPick={setActive}
+                    onPick={pickFromText}
+                    markRefs={markRefs}
                   />
                 </div>
               </div>
@@ -973,10 +1009,16 @@ export default function App() {
                         return (
                           <li
                             key={f.key}
-                            onClick={() => setActive(f.key)}
+                            ref={(el) => {
+                              cardRefs.current[f.key] = el;
+                            }}
+                            onClick={() => {
+                              pickedFrom.current = "list";
+                              setActive(f.key);
+                            }}
                             className={`${CARD} p-4 cursor-pointer transition-colors ${
                               active === f.key
-                                ? "border-blue-600"
+                                ? "border-blue-600 ring-2 ring-blue-600/30"
                                 : "hover:border-slate-300"
                             }`}
                           >
