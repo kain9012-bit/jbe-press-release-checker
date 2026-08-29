@@ -117,17 +117,69 @@ function openAiHeaders(cfg: AiConfig): Record<string, string> {
 
 /**
  * 브라우저가 서버에 닿지도 못했을 때는 이유를 알려 주지 않고 그냥 'Failed to fetch' 라고만 한다.
- * 사내 서버를 쓸 때 그 대부분은 CORS 아니면 서버가 안 떠 있는 것이라, 짚어 준다.
+ * 서버가 안 떠 있는 것, 포트가 틀린 것, 떠 있는데 브라우저가 막은 것이 다 같은 말로 나온다.
+ * 셋은 고치는 법이 완전히 다르므로 갈라 준다.
  */
+
+/**
+ * 서버가 살아 있기는 한지 따로 물어본다.
+ *
+ * `mode: 'no-cors'` 로 부르면 브라우저가 응답 내용을 안 보여 주는 대신 **CORS 를 따지지 않는다.**
+ * 그래서 이게 성공하면 서버는 떠 있고 길도 뚫려 있다는 뜻이고, 앞의 실패는 CORS 다.
+ * 이것마저 실패하면 서버가 없거나 포트가 틀렸거나 사설망 차단에 걸린 것이다.
+ */
+async function serverAlive(url: string): Promise<boolean> {
+  // 대답 없는 주소를 부르면 운영체제가 포기할 때까지(수십 초) 매달린다.
+  // 살았는지만 보면 되니 잠깐 기다렸다 끊는다.
+  try {
+    await fetch(url, {
+      method: 'GET',
+      mode: 'no-cors',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(2500),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const CORS_HOWTO =
+  'vLLM 은 --allowed-origins "*", Ollama 는 OLLAMA_ORIGINS="*", LiteLLM 은 --cors 로 엽니다.';
+
 async function fetchCompat(url: string, init: RequestInit): Promise<Response> {
   try {
     return await fetch(url, init);
   } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    const origin = (() => {
+      try {
+        return new URL(url).origin;
+      } catch {
+        return url;
+      }
+    })();
+
+    if (await serverAlive(origin)) {
+      throw new Error(
+        `서버는 떠 있는데 브라우저가 막았습니다 — ${origin}\n` +
+          `이 웹페이지(${location.origin})에서 오는 요청을 서버가 받아 주도록 CORS 를 열어야 합니다.\n` +
+          `${CORS_HOWTO}\n${detail}`,
+      );
+    }
+
+    const localTarget = /^https?:\/\/(localhost|127\.|0\.0\.0\.0|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(
+      origin,
+    );
+    const fromWeb = location.protocol === 'https:';
     throw new Error(
-      `서버에 닿지 못했습니다 — ${url}\n` +
-        '① 서버가 떠 있는지 ② 주소와 포트가 맞는지 ③ 그 서버가 이 웹페이지의 접속을 허용(CORS)하는지 확인해 주세요.\n' +
-        '(vLLM 은 --allowed-origins "*", Ollama 는 OLLAMA_ORIGINS="*" 로 켭니다.)\n' +
-        (e instanceof Error ? e.message : String(e)),
+      `서버에 닿지 못했습니다 — ${origin}\n` +
+        '① 그 서버가 지금 떠 있는지 ② 주소와 포트가 맞는지 확인해 주세요.\n' +
+        (localTarget && fromWeb
+          ? '③ 인터넷에 올린 이 주소(https)에서 내 컴퓨터 안의 주소를 부르는 것을 크롬이 막기도 합니다' +
+            '(사설망 차단). 그럴 때는 내려받은 단일 html 파일을 열어서 쓰세요.\n'
+          : `③ 떠 있는데도 이러면 CORS 입니다. ${CORS_HOWTO}\n`) +
+        detail,
     );
   }
 }

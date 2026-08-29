@@ -29,12 +29,16 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
 
   const compat = cfg.provider === 'compat';
   const ready = isConfigured(cfg);
-  /** https 로 연 화면에서 http 주소를 부르면 브라우저가 막는다 */
-  const mixed =
-    compat &&
-    location.protocol === 'https:' &&
-    /^http:\/\//i.test((cfg.baseUrl ?? '').trim()) &&
-    !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test((cfg.baseUrl ?? '').trim());
+  const target = (cfg.baseUrl ?? '').trim();
+  /** 내 컴퓨터 · 사내망 안의 주소인지 */
+  const localTarget =
+    /^https?:\/\/(localhost|127\.|0\.0\.0\.0|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(target);
+  /**
+   * 인터넷에 올린 화면(https)에서 내 컴퓨터 안의 서버를 부르는 것은 크롬이 막는다.
+   * localhost 라고 봐 주지 않는다 — 사설망 차단(Private Network Access)은 그것까지 막는다.
+   */
+  const blockedByBrowser = compat && location.protocol === 'https:' && /^http:\/\//i.test(target);
+
 
   async function runTest() {
     setTesting(true);
@@ -160,12 +164,15 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
                   <b className="font-mono text-slate-700">{compatUrl(cfg.baseUrl, 'chat/completions')}</b>
                 )}
               </p>
-              {mixed && (
+              {blockedByBrowser && (
                 <p className="mt-1.5 flex gap-1.5 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
                   <span>
-                    이 화면은 https 로 열려 있는데 서버 주소는 http 입니다. 브라우저가 막을 수 있습니다.
-                    막히면 내려받은 <b>단일 html 파일</b>을 열어서 쓰시거나, 서버에 https 를 붙이세요.
+                    이 화면은 인터넷 주소(https)로 열려 있는데 서버 주소는 http 입니다.{' '}
+                    {localTarget
+                      ? '크롬은 인터넷에서 연 화면이 내 컴퓨터·사내망 안의 서버를 부르는 것을 막습니다.'
+                      : '브라우저가 https 화면에서 http 요청을 막습니다.'}{' '}
+                    막히면 <b>내려받은 단일 html 파일</b>을 열어서 쓰시거나, 서버에 https 를 붙이세요.
                   </span>
                 </p>
               )}
@@ -229,6 +236,7 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
                 id="model"
                 type="text"
                 className="w-full h-11 px-3 rounded-md border border-slate-300 bg-white font-mono text-sm text-slate-800 outline-none focus:border-blue-600"
+                placeholder={compat ? 'qwen2.5-7b-instruct' : ''}
                 value={cfg.model}
                 onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
               />
