@@ -1,13 +1,11 @@
 import { useState } from 'react';
-import { X, KeyRound, ShieldCheck, RefreshCw, Loader2, AlertTriangle, CircleCheck, Plug, Server } from 'lucide-react';
+import { X, KeyRound, ShieldCheck, RefreshCw, Loader2, AlertTriangle, CircleCheck, Plug } from 'lucide-react';
 import {
   DEFAULT_MODEL,
   KEY_HELP,
   PROVIDER_LABEL,
   listModels,
   testModel,
-  compatUrl,
-  isConfigured,
   type AiConfig,
   type Provider,
 } from '../lib/ai';
@@ -26,19 +24,6 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
   const [listError, setListError] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
-
-  const compat = cfg.provider === 'compat';
-  const ready = isConfigured(cfg);
-  const target = (cfg.baseUrl ?? '').trim();
-  /** 내 컴퓨터 · 사내망 안의 주소인지 */
-  const localTarget =
-    /^https?:\/\/(localhost|127\.|0\.0\.0\.0|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(target);
-  /**
-   * 인터넷에 올린 화면(https)에서 내 컴퓨터 안의 서버를 부르는 것은 크롬이 막는다.
-   * localhost 라고 봐 주지 않는다 — 사설망 차단(Private Network Access)은 그것까지 막는다.
-   */
-  const blockedByBrowser = compat && location.protocol === 'https:' && /^http:\/\//i.test(target);
-
 
   async function runTest() {
     setTesting(true);
@@ -91,18 +76,10 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
         <div className="space-y-5 px-5 py-5">
           <p className="flex gap-2 rounded-md bg-slate-50 p-3 text-sm text-slate-700">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-green-600" aria-hidden />
-            {compat ? (
-              <span>
-                키와 주소는 이 브라우저에만 저장됩니다. 검토를 누르면 원고가 <b>적어 넣은 그 서버로</b>{' '}
-                전송됩니다. 사내망 안의 서버라면 원고가 밖으로 나가지 않지만, 바깥 주소를 적으면 그곳으로
-                나갑니다. 주소를 다시 한 번 확인해 주세요.
-              </span>
-            ) : (
-              <span>
-                키는 이 브라우저에만 저장되고 서버로 보내지 않습니다. 검토를 누를 때 원고가 선택한 회사의
-                모형에 직접 전송되므로, <b>대외비 원고는 키를 넣지 말고 규칙 검사만</b> 쓰시기 바랍니다.
-              </span>
-            )}
+            <span>
+              키는 이 브라우저에만 저장되고 서버로 보내지 않습니다. 검토를 누를 때 원고가 선택한 회사의
+              모형에 직접 전송되므로, <b>대외비 원고는 키를 넣지 말고 규칙 검사만</b> 쓰시기 바랍니다.
+            </span>
           </p>
 
           <div>
@@ -129,59 +106,9 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
             </select>
           </div>
 
-          {compat && (
-            <div>
-              <label className="mb-1.5 block text-sm font-bold text-slate-700" htmlFor="baseurl">
-                서버 주소
-              </label>
-              <div className="relative">
-                <Server
-                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
-                  aria-hidden
-                />
-                <input
-                  id="baseurl"
-                  type="url"
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder="http://127.0.0.1:8000"
-                  className="h-11 w-full rounded-md border border-slate-300 bg-white pl-9 pr-3 font-mono text-sm
-                             text-slate-800 outline-none focus:border-blue-600"
-                  value={cfg.baseUrl ?? ''}
-                  onChange={(e) => {
-                    setCfg({ ...cfg, baseUrl: e.target.value });
-                    setModels([]);
-                    setListError('');
-                    setTestResult(null);
-                  }}
-                />
-              </div>
-              <p className="mt-1 text-xs text-slate-500">
-                vLLM · Ollama · LiteLLM 처럼 OpenAI 규격을 따르는 서버면 됩니다.{' '}
-                <code className="font-mono">/v1/chat/completions</code> 는 알아서 붙이니 주소만 적으면
-                됩니다{cfg.baseUrl?.trim() ? ' — ' : '.'}
-                {cfg.baseUrl?.trim() && (
-                  <b className="font-mono text-slate-700">{compatUrl(cfg.baseUrl, 'chat/completions')}</b>
-                )}
-              </p>
-              {blockedByBrowser && (
-                <p className="mt-1.5 flex gap-1.5 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
-                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-                  <span>
-                    이 화면은 인터넷 주소(https)로 열려 있는데 서버 주소는 http 입니다.{' '}
-                    {localTarget
-                      ? '크롬은 인터넷에서 연 화면이 내 컴퓨터·사내망 안의 서버를 부르는 것을 막습니다.'
-                      : '브라우저가 https 화면에서 http 요청을 막습니다.'}{' '}
-                    막히면 <b>내려받은 단일 html 파일</b>을 열어서 쓰시거나, 서버에 https 를 붙이세요.
-                  </span>
-                </p>
-              )}
-            </div>
-          )}
-
           <div>
             <label className="mb-1.5 block text-sm font-bold text-slate-700" htmlFor="apikey">
-              API 키{compat && <span className="ml-1 font-normal text-slate-500">서버가 요구할 때만</span>}
+              API 키
             </label>
             <input
               id="apikey"
@@ -203,7 +130,7 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
               <button
                 type="button"
                 onClick={loadModels}
-                disabled={loading || !ready}
+                disabled={loading || !cfg.apiKey.trim()}
                 className="flex items-center gap-1 text-xs font-bold text-blue-700 hover:text-blue-800 disabled:text-slate-400"
               >
                 {loading ? (
@@ -236,7 +163,6 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
                 id="model"
                 type="text"
                 className="w-full h-11 px-3 rounded-md border border-slate-300 bg-white font-mono text-sm text-slate-800 outline-none focus:border-blue-600"
-                placeholder={compat ? 'qwen2.5-7b-instruct' : ''}
                 value={cfg.model}
                 onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
               />
@@ -246,7 +172,7 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
               <button
                 type="button"
                 onClick={runTest}
-                disabled={testing || !ready || !cfg.model.trim()}
+                disabled={testing || !cfg.apiKey.trim() || !cfg.model.trim()}
                 className="flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-xs font-bold
                            text-slate-700 hover:border-blue-600 hover:text-blue-700 disabled:opacity-50"
               >
@@ -285,12 +211,8 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
             ) : (
               <p className="mt-1.5 text-xs text-slate-500">
                 {models.length > 0
-                  ? compat
-                    ? `서버에 올라와 있는 ${models.length}개를 받아 왔습니다. 고른 뒤 한 번 시험해 보세요.`
-                    : `${models.length}개를 새 판 순서로 받아 왔습니다. 목록에 있어도 내 키로는 막혀 있는 것이 있으니, 고른 뒤 한 번 시험해 보세요. 값싸고 빠른 것(flash·mini 계열)으로 충분합니다.`
-                  : compat
-                    ? '서버 주소를 넣고 위 단추를 누르면 그 서버에 올라와 있는 모형을 받아 옵니다. 목록을 안 내주는 서버면 이름을 직접 적으세요.'
-                    : '모형 이름은 회사 사정으로 수시로 없어집니다. 키를 넣고 위 단추를 누르면 지금 쓸 수 있는 것만 골라 줍니다.'}
+                  ? `${models.length}개를 새 판 순서로 받아 왔습니다. 목록에 있어도 내 키로는 막혀 있는 것이 있으니, 고른 뒤 한 번 시험해 보세요. 값싸고 빠른 것(flash·mini 계열)으로 충분합니다.`
+                  : '모형 이름은 회사 사정으로 수시로 없어집니다. 키를 넣고 위 단추를 누르면 지금 쓸 수 있는 것만 골라 줍니다.'}
               </p>
             )}
           </div>
