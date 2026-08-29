@@ -444,6 +444,60 @@ export function pickText(fix: string) {
 }
 
 /** 자동으로 갈아 끼워도 되는 대안인지 */
+/* ------------------------------------------------------------------ */
+/* 조사 맞추기                                                          */
+/* ------------------------------------------------------------------ */
+
+/** 앞 글자에 받침이 있는지. 한글이 아니면 null */
+function hasBatchim(ch: string): boolean | null {
+  if (!ch || !/[가-힣]/.test(ch)) return null;
+  return (ch.charCodeAt(0) - 0xac00) % 28 !== 0;
+}
+
+/** 받침이 ‘ㄹ’인지 (‘으로/로’ 판단에 쓴다) */
+function isRieul(ch: string): boolean {
+  if (!/[가-힣]/.test(ch)) return false;
+  return (ch.charCodeAt(0) - 0xac00) % 28 === 8;
+}
+
+const JOSA_PAIRS: [string, string][] = [
+  ['으로', '로'],
+  ['을', '를'],
+  ['이', '가'],
+  ['은', '는'],
+  ['과', '와'],
+  ['이나', '나'],
+  ['이란', '란'],
+  ['이라', '라'],
+];
+
+/**
+ * 갈아 끼울 말이 조사로 시작하면 앞말의 받침에 맞춘다.
+ *
+ * ‘실습 등을 통해’ 에서 ‘을 통해’ 를 바꿀 때 AI 가 ‘를 접하며’ 를 주면
+ * ‘등를 접하며’ 가 된다. 받침 판단은 기계가 확실히 할 수 있는 일이므로 여기서 바로잡는다.
+ */
+export function agreeJosa(prev: string, replacement: string): string {
+  // 낱말을 통째로 받아도 되도록 마지막 글자만 본다
+  const prevChar = [...(prev ?? '')].pop() ?? '';
+  const batchim = hasBatchim(prevChar);
+  if (batchim === null) return replacement;
+
+  for (const [withB, withoutB] of JOSA_PAIRS) {
+    for (const form of [withB, withoutB]) {
+      // 조사 뒤에는 공백이나 글 끝이 와야 한다(‘은’ 으로 시작하는 낱말과 헷갈리지 않게)
+      if (!replacement.startsWith(form)) continue;
+      const after = replacement[form.length];
+      if (after !== undefined && !/[\s,.]/.test(after)) continue;
+
+      const right =
+        withB === '으로' ? (batchim && !isRieul(prevChar) ? '으로' : '로') : batchim ? withB : withoutB;
+      return right + replacement.slice(form.length);
+    }
+  }
+  return replacement;
+}
+
 /** ‘인공지능(AI)’ 처럼 한글 뒤에 외국 글자를 괄호로 단 병기 형태 */
 const BYUNGGI = /^[가-힣·\s]+\([A-Za-z0-9&.\-+]+\)$/;
 
@@ -458,13 +512,19 @@ export function isApplicable(fix: string) {
   return true;
 }
 
-/** 이 지적을 수정본에 넣는다면 어떤 말이 들어갈지. 넣을 수 없으면 null */
-export function replacementFor(f: Finding, d: Decision | undefined): string | null {
+/**
+ * 이 지적을 수정본에 넣는다면 어떤 말이 들어갈지. 넣을 수 없으면 null.
+ *
+ * `source` 를 주면 앞말에 맞춰 조사를 바로잡는다.
+ */
+export function replacementFor(f: Finding, d: Decision | undefined, source?: string): string | null {
   if (!d) return null;
   const custom = (d.custom ?? '').trim();
-  if (custom) return custom;
   const fix = f.fixes[d.pick] ?? '';
-  return isApplicable(fix) ? pickText(fix) : null;
+  const rep = custom || (isApplicable(fix) ? pickText(fix) : null);
+  if (rep === null) return null;
+  if (!source) return rep;
+  return agreeJosa(source[f.start - 1] ?? '', rep);
 }
 
 /** 수정본을 이루는 한 조각. `from` 이 있으면 갈아 끼운 자리다. */
@@ -488,7 +548,7 @@ export function buildRevisedParts(
   decisions: Record<string, Decision>,
 ): RevisedPart[] {
   const applied = findings
-    .filter((f) => decisions[f.key]?.on && replacementFor(f, decisions[f.key]) !== null)
+    .filter((f) => decisions[f.key]?.on && replacementFor(f, decisions[f.key], text) !== null)
     .sort((a, b) => a.start - b.start);
 
   const parts: RevisedPart[] = [];
@@ -496,7 +556,7 @@ export function buildRevisedParts(
   for (const f of applied) {
     // 앞의 지적과 자리가 겹치면 건너뛴다(먼저 잡은 쪽을 살린다)
     if (f.start < cursor) continue;
-    const rep = replacementFor(f, decisions[f.key]);
+    const rep = replacementFor(f, decisions[f.key], text);
     if (rep === null) continue;
     if (f.start > cursor) parts.push({ text: text.slice(cursor, f.start) });
     parts.push({ text: rep, from: text.slice(f.start, f.end), axis: f.axis, key: f.key });

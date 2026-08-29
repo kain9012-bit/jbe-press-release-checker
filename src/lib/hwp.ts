@@ -442,27 +442,64 @@ function bodyIndices(paras: string[]): number[] {
     .filter((i) => i >= 0);
 }
 
-const ROLE_WORDS = ['과장', '국장', '관장', '센터장', '팀장', '장학관', '장학사', '주무관', '사무관', '담당'];
+/**
+ * 직위로 볼 수 있는 말.
+ *
+ * 서식마다 ‘과장’ 이라고만 쓰기도 하고 ‘행정지원과장’ 처럼 앞에 부서를 붙이기도 한다.
+ * 한글 사이에 공백을 넣는 서식(‘담 당 자’, ‘중 등 담 당’)도 흔하다.
+ * 그래서 공백을 지운 뒤 **끝말**로 판단한다.
+ */
+const ROLE_SUFFIX = [
+  '장학사',
+  '장학관',
+  '담당자',
+  '주무관',
+  '사무관',
+  '센터장',
+  '교육장',
+  '과장',
+  '국장',
+  '관장',
+  '실장',
+  '부장',
+  '팀장',
+  '계장',
+  '담당',
+  '주사',
+];
 const TEL_RE = /^(0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4})$/;
 const DEPT_RE = /(과|관|실|센터|단|팀|국)$/;
+
+const despace = (s: string) => s.replace(/\s+/g, '');
+
+/** 직위면 그 끝말을, 아니면 빈 문자열 */
+function roleOf(text: string): string {
+  const t = despace(text);
+  if (t.length > 12) return '';
+  return ROLE_SUFFIX.find((r) => t.endsWith(r)) ?? '';
+}
 
 /** 담당 부서 표에서 부서명과 담당자를 뽑는다. */
 function parseContacts(paras: string[]) {
   const out = { 부서: '', 사람: [] as { role: string; name: string; tel: string }[] };
-  let i = paras.findIndex((p) => /담\s*당\s*부\s*서/.test(p));
+  const i = paras.findIndex((p) => /담\s*당\s*부\s*서/.test(p));
   if (i < 0) return out;
 
   let pending: { role: string; name: string; tel: string } | null = null;
   for (let k = i + 1; k < paras.length; k++) {
     const t = paras[k].trim();
     if (!t || /^\(\s*문\s*의\s*\)$/.test(t)) continue;
-    if (!out.부서 && DEPT_RE.test(t) && !ROLE_WORDS.includes(t) && t.length >= 3) {
-      out.부서 = t;
+
+    const role = roleOf(t);
+
+    // 부서명이 먼저 온다. ‘행정지원과장’ 처럼 직위로도 읽히는 말은 직위를 우선한다.
+    if (!out.부서 && !role && DEPT_RE.test(despace(t)) && despace(t).length >= 3) {
+      out.부서 = despace(t);
       continue;
     }
-    if (ROLE_WORDS.includes(t)) {
+    if (role) {
       if (pending) out.사람.push(pending);
-      pending = { role: t, name: '', tel: '' };
+      pending = { role, name: '', tel: '' };
       continue;
     }
     if (!pending) continue;
@@ -471,7 +508,7 @@ function parseContacts(paras: string[]) {
       continue;
     }
     if (!pending.name && /^[가-힣○◯xX?·\s]{2,10}$/.test(t)) {
-      pending.name = t;
+      pending.name = despace(t);
       continue;
     }
   }
@@ -568,21 +605,34 @@ export function parsePressRelease(data: Uint8Array): PressRelease {
     headLines.unshift(p);
   }
   if (headLines.length) {
-    r.제목 = headLines[0];
-    r.부제 = headLines.slice(1);
+    // 제목을 두 줄로 앉히는 서식이 있다.
+    //   김제교육지원청·김제시,
+    //   「2026 김제 청소년 문화 축제」 개최
+    // 쉼표로 끝나면 다음 줄까지가 제목이다.
+    let 제목 = headLines[0];
+    let rest = headLines.slice(1);
+    while (/[,，·]$/.test(제목.trim()) && rest.length) {
+      제목 = `${제목.trim()} ${rest[0].trim()}`;
+      rest = rest.slice(1);
+    }
+    r.제목 = 제목;
+    r.부제 = rest;
   }
 
   const contacts = parseContacts(paras);
   r.부서 = contacts.부서;
   const join = (p: { name: string; tel: string }) =>
     [p.name, p.tel].filter(Boolean).join(' | ');
+  // 서식의 세 칸(과장·담당·장학사)에 가까운 쪽으로 넣는다.
   const rest: string[] = [];
+  const 관리직 = ['과장', '국장', '관장', '센터장', '실장', '부장', '교육장'];
+  const 장학직 = ['장학사', '장학관'];
   for (const person of contacts.사람) {
     const line = join(person);
     if (!line) continue;
-    if (person.role === '과장' && !r.과장) r.과장 = line;
-    else if (person.role === '장학사' && !r.장학사) r.장학사 = line;
-    else if (person.role === '담당' && !r.담당) r.담당 = line;
+    if (관리직.includes(person.role) && !r.과장) r.과장 = line;
+    else if (장학직.includes(person.role) && !r.장학사) r.장학사 = line;
+    else if (!r.담당) r.담당 = line;
     else rest.push(line);
   }
   for (const line of rest) {

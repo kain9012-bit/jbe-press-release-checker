@@ -50,7 +50,14 @@ import {
   type Decision,
   type Finding,
 } from "./lib/analyze";
-import { DEFAULT_MODEL, reviewWithAi, fillBlanks, type AiConfig, type BlankTarget } from "./lib/ai";
+import {
+  DEFAULT_MODEL,
+  reviewWithAi,
+  fillBlanks,
+  tenseChanged,
+  type AiConfig,
+  type BlankTarget,
+} from "./lib/ai";
 import { parsePressRelease } from "./lib/hwp";
 import {
   buildHwpx,
@@ -109,6 +116,13 @@ function loadCfg(): AiConfig {
     /* 저장소를 못 쓰는 브라우저도 있다 */
   }
   return fallback;
+}
+
+/** 지적 바로 앞의 낱말. 조사 받침을 맞추라고 AI 에게 알려 줄 때 쓴다. */
+function wordBefore(text: string, start: number) {
+  const head = text.slice(Math.max(0, start - 20), start);
+  const m = head.match(/([^\s]+)$/);
+  return m ? m[1] : '';
 }
 
 /** 지적이 들어 있는 문장을 잘라 온다. AI 에게 문맥을 줄 때 쓴다. */
@@ -196,8 +210,11 @@ export default function App() {
 
   /** 아직 넣을 말이 정해지지 않은 자리 */
   const blanks = useMemo(
-    () => findings.filter((f) => replacementFor(f, decisions[f.key] ?? { on: false, pick: 0 }) === null),
-    [findings, decisions],
+    () =>
+      findings.filter(
+        (f) => replacementFor(f, decisions[f.key] ?? { on: false, pick: 0 }, source) === null,
+      ),
+    [findings, decisions, source],
   );
 
   /**
@@ -221,21 +238,29 @@ export default function App() {
         text: f.text,
         why: f.why,
         context: sentenceAround(source, f.start, f.end),
+        before: wordBefore(source, f.start),
       }));
       const fills = await fillBlanks(cfg, targets);
       const n = Object.keys(fills).length;
+      let held = 0;
       setDecisions((prev) => {
         const next = { ...prev };
         for (const [key, rep] of Object.entries(fills)) {
           const d = next[key] ?? { on: false, pick: 0 };
-          next[key] = { ...d, custom: rep, on: true };
+          const f = findings.find((x) => x.key === key);
+          // 시제가 바뀐 제안은 넣어 두되 켜지는 않는다. 눈으로 보고 정하시라는 뜻이다.
+          const risky = f ? tenseChanged(f.text, rep) : false;
+          if (risky) held += 1;
+          next[key] = { ...d, custom: rep, on: !risky };
         }
         return next;
       });
       setFillNote(
         n === 0
           ? 'AI가 채울 만한 자리를 찾지 못했습니다.'
-          : `${n}곳을 AI가 채웠습니다. 넣은 말이 맞는지 확인해 주세요.`,
+          : `${n}곳을 AI가 채웠습니다.` +
+              (held ? ` 그중 ${held}곳은 시제가 바뀌어 꺼 두었습니다.` : '') +
+              ' 넣은 말이 맞는지 확인해 주세요.',
       );
     } catch (e) {
       setAiError(e instanceof Error ? e.message : String(e));
@@ -251,7 +276,7 @@ export default function App() {
       const next = { ...prev };
       for (const f of findings) {
         const d = next[f.key] ?? { on: false, pick: 0 };
-        next[f.key] = { ...d, on: on && replacementFor(f, d) !== null };
+        next[f.key] = { ...d, on: on && replacementFor(f, d, source) !== null };
       }
       return next;
     });
@@ -403,18 +428,28 @@ export default function App() {
               text: f.text,
               why: f.why,
               context: sentenceAround(src, f.start, f.end),
+              before: wordBefore(src, f.start),
             })),
           );
           const n = Object.keys(fills).length;
+          let held = 0;
           setDecisions((prev) => {
             const next = { ...prev };
             for (const [key, rep] of Object.entries(fills)) {
               const d = next[key] ?? { on: false, pick: 0 };
-              next[key] = { ...d, custom: rep, on: true };
+              const f = stuck.find((x) => x.key === key);
+              const risky = f ? tenseChanged(f.text, rep) : false;
+              if (risky) held += 1;
+              next[key] = { ...d, custom: rep, on: !risky };
             }
             return next;
           });
-          if (n) setFillNote(`규칙이 정하지 못한 ${n}곳도 AI가 채웠습니다. 확인해 주세요.`);
+          if (n)
+            setFillNote(
+              `규칙이 정하지 못한 ${n}곳도 AI가 채웠습니다.` +
+                (held ? ` 그중 ${held}곳은 시제가 바뀌어 꺼 두었습니다.` : '') +
+                ' 확인해 주세요.',
+            );
         } catch {
           /* 채우기가 실패해도 검토 결과는 살린다 */
         } finally {
