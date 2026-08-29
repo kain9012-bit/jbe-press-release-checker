@@ -16,6 +16,10 @@ import {
   SpellCheck,
   Sparkles,
   MessagesSquare,
+  Wand2,
+  Undo2,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { Header, type Tab } from "./components/Header";
 import Highlight from "./components/Highlight";
@@ -37,6 +41,7 @@ import { CHECKLIST } from "./data/checklist";
 import {
   analyze,
   buildRevised,
+  buildRevisedParts,
   defaultDecisions,
   isApplicable,
   replacementFor,
@@ -45,7 +50,7 @@ import {
   type Decision,
   type Finding,
 } from "./lib/analyze";
-import { DEFAULT_MODEL, reviewWithAi, type AiConfig } from "./lib/ai";
+import { DEFAULT_MODEL, reviewWithAi, fillBlanks, type AiConfig, type BlankTarget } from "./lib/ai";
 import { parsePressRelease } from "./lib/hwp";
 import {
   buildHwpx,
@@ -106,6 +111,14 @@ function loadCfg(): AiConfig {
   return fallback;
 }
 
+/** 지적이 들어 있는 문장을 잘라 온다. AI 에게 문맥을 줄 때 쓴다. */
+function sentenceAround(text: string, start: number, end: number) {
+  const from = Math.max(0, text.lastIndexOf('\n', start - 1) + 1);
+  const nl = text.indexOf('\n', end);
+  const to = nl < 0 ? text.length : nl;
+  return text.slice(from, to).trim().slice(0, 300);
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>("check");
   const [text, setText] = useState("");
@@ -131,10 +144,14 @@ export default function App() {
   const [cfg, setCfg] = useState<AiConfig>(loadCfg);
   const [showCfg, setShowCfg] = useState(false);
   /** 키가 없어 설정 창을 열었을 때, 저장 뒤 이어서 할 일 */
-  const [afterKey, setAfterKey] = useState<"run" | "add" | null>(null);
+  const [afterKey, setAfterKey] = useState<"run" | "add" | "fill" | null>(null);
   const [filter, setFilter] = useState<"전체" | Axis>("전체");
   const [active, setActive] = useState<string | null>(null);
   const [copied, setCopied] = useState("");
+  /** 수정본에서 고치기 전 말도 같이 보여 줄지 */
+  const [showFrom, setShowFrom] = useState(false);
+  const [filling, setFilling] = useState(false);
+  const [fillNote, setFillNote] = useState('');
   const [exportError, setExportError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
@@ -170,10 +187,75 @@ export default function App() {
     () => findings.filter((f) => filter === "전체" || f.axis === filter),
     [findings, filter],
   );
-  const revised = useMemo(
-    () => (result ? buildRevised(source, findings, decisions) : ""),
+  const revisedParts = useMemo(
+    () => (result ? buildRevisedParts(source, findings, decisions) : []),
     [result, source, findings, decisions],
   );
+  const revised = useMemo(() => revisedParts.map((p) => p.text).join(""), [revisedParts]);
+  const fixedCount = revisedParts.filter((p) => p.from !== undefined).length;
+
+  /** 아직 넣을 말이 정해지지 않은 자리 */
+  const blanks = useMemo(
+    () => findings.filter((f) => replacementFor(f, decisions[f.key] ?? { on: false, pick: 0 }) === null),
+    [findings, decisions],
+  );
+
+  /**
+   * 자동으로 못 고치는 자리를 AI 에게 물어 채운다.
+   *
+   * ‘을 통해 → (으)로 / ~하여’ 처럼 앞말에 따라 달라지는 것은 규칙으로 정할 수 없다.
+   * 문장을 같이 주고 그 자리에 그대로 끼울 말을 받아 온다.
+   */
+  async function fillWithAi() {
+    if (blanks.length === 0) return;
+    if (!cfg.apiKey) {
+      setAfterKey('fill');
+      setShowCfg(true);
+      return;
+    }
+    setFilling(true);
+    setAiError('');
+    try {
+      const targets: BlankTarget[] = blanks.slice(0, 40).map((f) => ({
+        id: f.key,
+        text: f.text,
+        why: f.why,
+        context: sentenceAround(source, f.start, f.end),
+      }));
+      const fills = await fillBlanks(cfg, targets);
+      const n = Object.keys(fills).length;
+      setDecisions((prev) => {
+        const next = { ...prev };
+        for (const [key, rep] of Object.entries(fills)) {
+          const d = next[key] ?? { on: false, pick: 0 };
+          next[key] = { ...d, custom: rep, on: true };
+        }
+        return next;
+      });
+      setFillNote(
+        n === 0
+          ? 'AI가 채울 만한 자리를 찾지 못했습니다.'
+          : `${n}곳을 AI가 채웠습니다. 넣은 말이 맞는지 확인해 주세요.`,
+      );
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : String(e));
+      setAiState('fail');
+    } finally {
+      setFilling(false);
+    }
+  }
+
+  /** 넣을 수 있는 것을 한꺼번에 켜고 끈다 */
+  function setAll(on: boolean) {
+    setDecisions((prev) => {
+      const next = { ...prev };
+      for (const f of findings) {
+        const d = next[f.key] ?? { on: false, pick: 0 };
+        next[f.key] = { ...d, on: on && replacementFor(f, d) !== null };
+      }
+      return next;
+    });
+  }
 
   /* 머리말(배포일·부서·담당자)은 검사 대상이 아니므로 폼 값을 그대로 얹는다 */
   const headerOnly = (m: ReleaseMeta) => ({
@@ -258,6 +340,7 @@ export default function App() {
     setBody([]);
     setMeta(EMPTY_META);
     setFileNote(null);
+    setFillNote('');
     setDragOver(false);
     jumpToResult.current = false;
     setActive(null);
@@ -306,7 +389,39 @@ export default function App() {
     setExportError("");
     jumpToResult.current = true;
 
-    if (withAi) await askAi(src, r.findings);
+    if (withAi) {
+      await askAi(src, r.findings);
+      // 규칙이 답을 정하지 못한 자리도 이참에 같이 채운다
+      const stuck = r.findings.filter((f) => !isApplicable(f.fixes[0] ?? ''));
+      if (stuck.length) {
+        setFilling(true);
+        try {
+          const fills = await fillBlanks(
+            cfg,
+            stuck.slice(0, 40).map((f) => ({
+              id: f.key,
+              text: f.text,
+              why: f.why,
+              context: sentenceAround(src, f.start, f.end),
+            })),
+          );
+          const n = Object.keys(fills).length;
+          setDecisions((prev) => {
+            const next = { ...prev };
+            for (const [key, rep] of Object.entries(fills)) {
+              const d = next[key] ?? { on: false, pick: 0 };
+              next[key] = { ...d, custom: rep, on: true };
+            }
+            return next;
+          });
+          if (n) setFillNote(`규칙이 정하지 못한 ${n}곳도 AI가 채웠습니다. 확인해 주세요.`);
+        } catch {
+          /* 채우기가 실패해도 검토 결과는 살린다 */
+        } finally {
+          setFilling(false);
+        }
+      }
+    }
   }
 
   /** AI 에게 문맥 검토를 맡긴다. 규칙으로 이미 잡은 것은 넘겨서 중복 지적을 막는다. */
@@ -348,6 +463,7 @@ export default function App() {
     const next = afterKey;
     setAfterKey(null);
     if (next === "run") void run(true);
+    else if (next === "fill") void fillWithAi();
     else if (result) void askAi(source, result.findings);
   }
 
@@ -602,18 +718,10 @@ export default function App() {
                 {/* 두 방식의 차이를 고르기 전에 알려 준다 */}
                 <div className="grid gap-2 sm:grid-cols-2 text-sm">
                   <p className="rounded-md bg-white/70 px-3 py-2 text-slate-700">
-                    <b className="text-slate-900">규칙으로 검토</b> — 용어
-                    목록과 어문 규범으로 대조합니다. 바로 끝나고, 원고는 이
-                    브라우저 밖으로 나가지 않습니다.
+                    <b className="text-slate-900">규칙으로 검토</b> — 용어 목록과 어문 규범으로 대조합니다.
                   </p>
                   <p className="rounded-md bg-white/70 px-3 py-2 text-slate-700">
-                    <b className="text-slate-900">AI까지 검토</b> — 여기에
-                    호응·비문·군더더기까지 봅니다.
-                    <b className="text-slate-900">
-                      {" "}
-                      원고가 지정한 사업자에게 전송
-                    </b>
-                    되니 대외비는 위쪽을 쓰세요.
+                    <b className="text-slate-900">AI까지 검토</b> — 여기에 호응·비문·군더더기까지 봅니다.
                   </p>
                 </div>
 
@@ -999,12 +1107,49 @@ export default function App() {
             <section className="space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <SectionTitle
-                  count={Object.values(decisions).filter((d) => d.on).length}
-                  desc="문맥을 봐야 하는 항목은 자동으로 넣지 않습니다"
+                  count={fixedCount}
+                  unit="곳"
+                  desc="자동으로 고친 자리는 초록으로 칠했습니다"
                 >
-                  반영한 수정본
+                  자동 수정본
                 </SectionTitle>
                 <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => setAll(true)} className={BTN_GHOST}>
+                    <Wand2 className="w-4 h-4" aria-hidden="true" />
+                    모두 고치기
+                  </button>
+                  <button type="button" onClick={() => setAll(false)} className={BTN_GHOST}>
+                    <Undo2 className="w-4 h-4" aria-hidden="true" />
+                    모두 되돌리기
+                  </button>
+                  {blanks.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={fillWithAi}
+                      disabled={filling}
+                      className={BTN_GHOST}
+                    >
+                      {filling ? (
+                        <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Sparkles className="w-4 h-4" aria-hidden="true" />
+                      )}
+                      못 고친 {blanks.length}곳 AI로 채우기
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowFrom((v) => !v)}
+                    aria-pressed={showFrom}
+                    className={showFrom ? BTN_PRIMARY : BTN_GHOST}
+                  >
+                    {showFrom ? (
+                      <Eye className="w-4 h-4" aria-hidden="true" />
+                    ) : (
+                      <EyeOff className="w-4 h-4" aria-hidden="true" />
+                    )}
+                    원래 말 같이 보기
+                  </button>
                   <button
                     type="button"
                     onClick={() => copy(revised, "수정본")}
@@ -1062,9 +1207,38 @@ export default function App() {
               )}
 
               <div className={`${CARD} p-5`}>
-                <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-4 font-sans text-base leading-[1.9]">
-                  {revised}
-                </pre>
+                {fillNote && (
+                  <p className="mb-3 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-slate-800">
+                    {fillNote}
+                  </p>
+                )}
+
+                {fixedCount === 0 && (
+                  <p className="mb-3 text-sm text-slate-600">
+                    아직 고친 곳이 없습니다. 위 지적에서 하나씩 켜거나 <b>모두 고치기</b>를 누르세요.
+                  </p>
+                )}
+
+                {/* 갈아 끼운 자리를 칠해서 어디가 바뀌었는지 바로 보이게 한다 */}
+                <div className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-4 font-sans text-base leading-[1.9]">
+                  {revisedParts.map((part, i) =>
+                    part.from === undefined ? (
+                      <span key={i}>{part.text}</span>
+                    ) : (
+                      <span key={i} title={`원래: ${part.from}`}>
+                        {showFrom && (
+                          <span className="rounded bg-red-50 px-1 text-red-700 line-through decoration-red-300">
+                            {part.from}
+                          </span>
+                        )}
+                        {showFrom && ' '}
+                        <span className="rounded bg-green-50 px-1 font-bold text-green-700">
+                          {part.text}
+                        </span>
+                      </span>
+                    ),
+                  )}
+                </div>
 
                 <details className="mt-4 rounded-md border border-slate-200 p-4">
                   <summary className="cursor-pointer font-bold text-slate-900">

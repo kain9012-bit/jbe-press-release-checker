@@ -61,7 +61,7 @@ ${text}
 """`;
 }
 
-async function callAnthropic(cfg: AiConfig, user: string) {
+async function callAnthropic(cfg: AiConfig, user: string, system: string = SYSTEM) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -73,7 +73,7 @@ async function callAnthropic(cfg: AiConfig, user: string) {
     body: JSON.stringify({
       model: cfg.model,
       max_tokens: 4000,
-      system: SYSTEM,
+      system,
       messages: [{ role: 'user', content: user }],
     }),
   });
@@ -82,14 +82,14 @@ async function callAnthropic(cfg: AiConfig, user: string) {
   return (data.content ?? []).map((c: { text?: string }) => c.text ?? '').join('');
 }
 
-async function callOpenAI(cfg: AiConfig, user: string) {
+async function callOpenAI(cfg: AiConfig, user: string, system: string = SYSTEM) {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
     body: JSON.stringify({
       model: cfg.model,
       messages: [
-        { role: 'system', content: SYSTEM },
+        { role: 'system', content: system },
         { role: 'user', content: user },
       ],
       response_format: { type: 'json_object' },
@@ -100,7 +100,7 @@ async function callOpenAI(cfg: AiConfig, user: string) {
   return data.choices?.[0]?.message?.content ?? '';
 }
 
-async function callGemini(cfg: AiConfig, user: string) {
+async function callGemini(cfg: AiConfig, user: string, system: string = SYSTEM) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     cfg.model,
   )}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
@@ -108,7 +108,7 @@ async function callGemini(cfg: AiConfig, user: string) {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      systemInstruction: { parts: [{ text: SYSTEM }] },
+      systemInstruction: { parts: [{ text: system }] },
       contents: [{ role: 'user', parts: [{ text: user }] }],
       generationConfig: { responseMimeType: 'application/json' },
     }),
@@ -327,4 +327,65 @@ export async function testModel(cfg: AiConfig): Promise<void> {
     }),
   });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+}
+
+/* ------------------------------------------------------------------ */
+/* 자동으로 못 고치는 자리를 AI 가 채운다                                */
+/* ------------------------------------------------------------------ */
+
+const FILL_SYSTEM = `당신은 대한민국 공공기관 보도자료를 다듬는 국어 전문가다.
+문장에서 고쳐야 할 조각과 그 이유를 준다. **그 자리에 그대로 끼워 넣을 말만** 만들어라.
+
+지켜야 할 것
+- 준 조각을 대신할 말만 낸다. 앞뒤 문장을 다시 쓰지 마라.
+- 조사와 어미가 앞뒤와 자연스럽게 이어지게 한다(‘~을 통해’ → ‘(으)로’ 가 아니라 실제 문맥에 맞는 ‘로’ 또는 ‘하여’).
+- 외국 글자는 한글로 먼저 적고 괄호 안에 넣는다. 예: AI → 인공지능(AI)
+- 물결(~)이나 ‘(으)로’ 같은 자리표시를 쓰지 마라. 완성된 말만 낸다.
+- 사실관계(수치, 날짜, 기관명, 사람 이름)는 바꾸지 마라.
+- 마땅한 말이 없으면 그 항목은 빼라. 억지로 채우지 마라.
+
+출력은 다른 말 없이 JSON 객체 하나만 낸다.
+{"fills":[{"id":"준 id 그대로","replacement":"그 자리에 넣을 말"}]}`;
+
+export interface BlankTarget {
+  id: string;
+  /** 고쳐야 할 조각 */
+  text: string;
+  /** 왜 고쳐야 하는지 */
+  why: string;
+  /** 조각이 들어 있는 문장 */
+  context: string;
+}
+
+/** 자동으로 못 고치는 자리들을 한 번에 물어 채운다. id → 넣을 말 */
+export async function fillBlanks(
+  cfg: AiConfig,
+  targets: BlankTarget[],
+): Promise<Record<string, string>> {
+  if (targets.length === 0) return {};
+
+  const user = targets
+    .map(
+      (t) =>
+        `- id: ${t.id}\n  고칠 조각: ${t.text}\n  이유: ${t.why}\n  들어 있는 문장: ${t.context}`,
+    )
+    .join('\n');
+
+  const raw =
+    cfg.provider === 'anthropic'
+      ? await callAnthropic({ ...cfg }, user, FILL_SYSTEM)
+      : cfg.provider === 'openai'
+        ? await callOpenAI({ ...cfg }, user, FILL_SYSTEM)
+        : await callGemini({ ...cfg }, user, FILL_SYSTEM);
+
+  const parsed = parseJson(raw);
+  const out: Record<string, string> = {};
+  for (const f of parsed.fills ?? []) {
+    const id = String(f.id ?? '').trim();
+    const rep = String(f.replacement ?? '').trim();
+    // 자리표시가 섞여 오면 쓰지 않는다. 그대로 넣을 수 있는 말만 받는다.
+    if (!id || !rep || /[~]|\((으|이|가|을|를|과|와|는|은)\)/.test(rep)) continue;
+    out[id] = rep;
+  }
+  return out;
 }

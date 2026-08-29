@@ -1,4 +1,4 @@
-import { PATTERN_RULES, EXTRA_LOANWORDS, checkDueum, type Axis } from '../data/rules';
+import { PATTERN_RULES, EXTRA_LOANWORDS, ROMAN_KOREAN, checkDueum, type Axis } from '../data/rules';
 import termsRaw from '../data/terms.json';
 import appendixRaw from '../data/appendix.json';
 
@@ -128,13 +128,15 @@ export function analyze(text: string): AnalyzeResult {
       const beforeOpen = text[s - 2];
       if (open === '(' && close === ')' && (isHangul(beforeOpen) || /[)\]]/.test(beforeOpen ?? ''))) continue;
       if (/^https?$|^www$/i.test(m[0])) continue;
+      // 널리 쓰는 약어는 병기 형태가 정해져 있으니 바로 고칠 수 있게 준다
+      const known = ROMAN_KOREAN[m[0].toUpperCase().replace(/[^A-Z0-9]/g, '')];
       push({
         axis: '용이성',
         sub: '① 외국 글자(로마자) 사용',
         start: s,
         end: e,
         text: m[0],
-        fixes: [`한글로 먼저 적고 괄호 안에 ‘${m[0]}’을(를) 넣기`],
+        fixes: known ? [known] : [`한글로 먼저 적고 괄호 안에 ‘${m[0]}’을(를) 넣기`],
         why: '공문서는 한글로 작성하되, 외국 글자를 써야 할 때는 한글로 먼저 적고 괄호 안에 적는다.',
         src: '[평가] 용이성 ① 외국 글자(로마자, 한자 등) 사용 / 국어기본법 제14조',
         severity: '오류',
@@ -442,9 +444,14 @@ export function pickText(fix: string) {
 }
 
 /** 자동으로 갈아 끼워도 되는 대안인지 */
+/** ‘인공지능(AI)’ 처럼 한글 뒤에 외국 글자를 괄호로 단 병기 형태 */
+const BYUNGGI = /^[가-힣·\s]+\([A-Za-z0-9&.\-+]+\)$/;
+
 export function isApplicable(fix: string) {
   const t = pickText(fix);
   if (!t) return false;
+  // 괄호가 있어도 병기 형태는 그대로 넣으면 된다
+  if (BYUNGGI.test(t)) return true;
   if (/[~()]/.test(t)) return false;
   if (t.length > 24) return false;
   if (/(하기|넣기|바꾸기|나누기|적기|쓰기|삼가기)$/.test(t)) return false;
@@ -460,22 +467,53 @@ export function replacementFor(f: Finding, d: Decision | undefined): string | nu
   return isApplicable(fix) ? pickText(fix) : null;
 }
 
+/** 수정본을 이루는 한 조각. `from` 이 있으면 갈아 끼운 자리다. */
+export interface RevisedPart {
+  text: string;
+  /** 원래 있던 말 (바뀐 자리에만) */
+  from?: string;
+  axis?: Axis;
+  key?: string;
+}
+
+/**
+ * 수정본을 조각으로 만든다.
+ *
+ * 어디를 고쳤는지 화면에 보여 주려면 바뀐 자리를 알아야 한다. 글자만 이어 붙이면
+ * 그 정보가 사라지므로, 갈아 끼운 자리는 `from` 을 달아 따로 표시해 둔다.
+ */
+export function buildRevisedParts(
+  text: string,
+  findings: Finding[],
+  decisions: Record<string, Decision>,
+): RevisedPart[] {
+  const applied = findings
+    .filter((f) => decisions[f.key]?.on && replacementFor(f, decisions[f.key]) !== null)
+    .sort((a, b) => a.start - b.start);
+
+  const parts: RevisedPart[] = [];
+  let cursor = 0;
+  for (const f of applied) {
+    // 앞의 지적과 자리가 겹치면 건너뛴다(먼저 잡은 쪽을 살린다)
+    if (f.start < cursor) continue;
+    const rep = replacementFor(f, decisions[f.key]);
+    if (rep === null) continue;
+    if (f.start > cursor) parts.push({ text: text.slice(cursor, f.start) });
+    parts.push({ text: rep, from: text.slice(f.start, f.end), axis: f.axis, key: f.key });
+    cursor = f.end;
+  }
+  if (cursor < text.length) parts.push({ text: text.slice(cursor) });
+  return parts;
+}
+
 export function buildRevised(
   text: string,
   findings: Finding[],
   decisions: Record<string, Decision>,
 ) {
-  const applied = findings
-    .filter((f) => decisions[f.key]?.on && replacementFor(f, decisions[f.key]) !== null)
-    .sort((a, b) => b.start - a.start);
-
-  let out = text;
-  for (const f of applied) {
-    const rep = replacementFor(f, decisions[f.key]);
-    if (rep === null) continue;
-    out = out.slice(0, f.start) + rep + out.slice(f.end);
-  }
-  return out;
+  return buildRevisedParts(text, findings, decisions)
+    .map((p) => p.text)
+    .join('');
 }
 
 /** 처음 열었을 때의 기본 선택: ‘오류’이면서 갈아 끼울 수 있는 것만 켠다 */
