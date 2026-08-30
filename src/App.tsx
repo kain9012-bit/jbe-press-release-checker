@@ -51,7 +51,9 @@ import {
   reviewWithAi,
   fillBlanks,
   tenseChanged,
+  verifyEdits,
   type AiConfig,
+  type EditToCheck,
   type BlankTarget,
 } from "./lib/ai";
 import { parsePressRelease } from "./lib/hwp";
@@ -158,6 +160,9 @@ export default function App() {
   const [showFrom, setShowFrom] = useState(false);
   const [filling, setFilling] = useState(false);
   const [fillNote, setFillNote] = useState('');
+  /** 검수에서 걸린 자리 — key → 왜 잘못인지 */
+  const [verifyNotes, setVerifyNotes] = useState<Record<string, string>>({});
+  const [verifying, setVerifying] = useState(false);
   const [exportError, setExportError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
@@ -167,6 +172,23 @@ export default function App() {
   const markRefs = useRef<Record<string, HTMLElement | null>>({});
   /** 어느 쪽을 눌렀는지. 누른 쪽은 그대로 두고 반대쪽만 굴린다. */
   const pickedFrom = useRef<"text" | "list" | null>(null);
+  /**
+   * 결정값의 거울.
+   *
+   * 한 번 누르면 검토 → 채우기 → 검수까지 이어서 도는데, 그 사이에는 setDecisions 로 넣은
+   * 값을 곧바로 다시 읽을 수 없다(리액트가 다음 그림에 반영한다). 그래서 같은 값을 여기에도
+   * 넣어 두고 이어지는 단계는 이쪽을 본다.
+   */
+  const decisionsRef = useRef<Record<string, Decision>>({});
+  const putDecisions = (
+    next:
+      | Record<string, Decision>
+      | ((d: Record<string, Decision>) => Record<string, Decision>),
+  ) => {
+    decisionsRef.current =
+      typeof next === "function" ? next(decisionsRef.current) : next;
+    setDecisions(decisionsRef.current);
+  };
   /** 검토를 막 끝냈을 때만 결과로 내려간다(체크만 만졌는데 화면이 튀면 안 된다) */
   const jumpToResult = useRef(false);
 
@@ -270,7 +292,7 @@ export default function App() {
       const fills = await fillBlanks(cfg, targets);
       const n = Object.keys(fills).length;
       let held = 0;
-      setDecisions((prev) => {
+      putDecisions((prev) => {
         const next = { ...prev };
         for (const [key, rep] of Object.entries(fills)) {
           const d = next[key] ?? { on: false, pick: 0 };
@@ -299,7 +321,7 @@ export default function App() {
 
   /** 넣을 수 있는 것을 한꺼번에 켜고 끈다 */
   function setAll(on: boolean) {
-    setDecisions((prev) => {
+    putDecisions((prev) => {
       const next = { ...prev };
       for (const f of findings) {
         const d = next[f.key] ?? { on: false, pick: 0 };
@@ -383,7 +405,7 @@ export default function App() {
     setResult(null);
     setBaseDoc(null);
     setSource("");
-    setDecisions({});
+    putDecisions({});
     setAiFindings([]);
     setAiSummary("");
     setAiState("idle");
@@ -433,18 +455,19 @@ export default function App() {
     setBaseDoc(doc);
     setSource(src);
     setResult(r);
-    setDecisions(defaultDecisions(r.findings));
+    putDecisions(defaultDecisions(r.findings));
     setAiFindings([]);
     setAiSummary("");
     setAiState("idle");
     setAiError("");
+    setVerifyNotes({});
     setActive(null);
     setExportError("");
     jumpToResult.current = true;
     setShowInput(false);
 
     if (withAi) {
-      await askAi(src, r.findings);
+      const found = await askAi(src, r.findings);
       // 규칙이 답을 정하지 못한 자리도 이참에 같이 채운다
       const stuck = r.findings.filter((f) => !isApplicable(f.fixes[0] ?? ''));
       if (stuck.length) {
@@ -462,7 +485,7 @@ export default function App() {
           );
           const n = Object.keys(fills).length;
           let held = 0;
-          setDecisions((prev) => {
+          putDecisions((prev) => {
             const next = { ...prev };
             for (const [key, rep] of Object.entries(fills)) {
               const d = next[key] ?? { on: false, pick: 0 };
@@ -485,27 +508,88 @@ export default function App() {
           setFilling(false);
         }
       }
+
+      // 마지막으로 고쳐 놓은 것을 스스로 다시 본다
+      setVerifying(true);
+      try {
+        const n = await verifyPass(src, [...r.findings, ...found]);
+        if (n) setFillNote((v) => (v ? v + " " : "") + `검수에서 ${n}곳이 걸려 꺼 두었습니다.`);
+      } catch {
+        /* 검수가 실패해도 앞 단계 결과는 살린다 */
+      } finally {
+        setVerifying(false);
+      }
     }
   }
 
   /** AI 에게 문맥 검토를 맡긴다. 규칙으로 이미 잡은 것은 넘겨서 중복 지적을 막는다. */
-  async function askAi(src: string, ruleFindings: Finding[]) {
+  async function askAi(src: string, ruleFindings: Finding[]): Promise<Finding[]> {
     setAiState("run");
     setAiError("");
     try {
       const r = await reviewWithAi(cfg, src, ruleFindings);
       setAiFindings(r.findings);
       setAiSummary(r.summary);
-      setDecisions((d) => {
+      putDecisions((d) => {
         const next = { ...d };
         for (const f of r.findings) next[f.key] = { on: false, pick: 0 };
         return next;
       });
       setAiState("done");
+      return r.findings;
     } catch (e) {
       setAiError(e instanceof Error ? e.message : String(e));
       setAiState("fail");
+      return [];
     }
+  }
+
+  /**
+   * 검수 — 고쳐 놓은 것을 AI 가 스스로 다시 본다.
+   *
+   * 모형은 부를 때마다 답이 달라서 제가 제대로 붙인 병기를 다음 번에 떼어 내기도 한다.
+   * 사람이 전부 읽어 볼 수는 없으니 **넣기 전에** 한 번 더 묻는다. 새로 찾는 것이 아니라
+   * 고친 자리만 옳으냐고 묻기 때문에 답을 그 자리에 그대로 되돌릴 수 있다.
+   * 걸린 자리는 지우지 않고 **꺼 둔다** — 판단은 사람이 한다.
+   */
+  async function verifyPass(src: string, all: Finding[]): Promise<number> {
+    // 켜진 것만 보면 안 된다. AI 제안은 기본이 꺼짐이라, 켜기 전에 미리 걸러 줘야
+    // 사람이 ‘모두 고치기’ 를 눌렀을 때 나쁜 것이 딸려 들어가지 않는다.
+    // 그래서 넣을 말이 정해진 자리는 켜 놓은 셈 치고 전부 검수한다.
+    const dec = decisionsRef.current;
+    const probe: Record<string, Decision> = { ...dec };
+    for (const f of all) {
+      const d = probe[f.key] ?? { on: false, pick: 0 };
+      if (replacementFor(f, d, src) !== null) probe[f.key] = { ...d, on: true };
+    }
+    const parts = buildRevisedParts(src, all, probe);
+    const revisedText = parts.map((x) => x.text).join("");
+
+    const edits: EditToCheck[] = [];
+    let at = 0;
+    for (const part of parts) {
+      if (part.from !== undefined && part.key) {
+        edits.push({
+          id: part.key,
+          from: part.from,
+          to: part.text,
+          after: sentenceAround(revisedText, at, at + part.text.length),
+        });
+      }
+      at += part.text.length;
+    }
+    if (edits.length === 0) return 0;
+
+    const wrong = await verifyEdits(cfg, edits.slice(0, 60));
+    const keys = Object.keys(wrong);
+    if (keys.length === 0) return 0;
+    putDecisions((prev) => {
+      const next = { ...prev };
+      for (const k of keys) if (next[k]) next[k] = { ...next[k], on: false };
+      return next;
+    });
+    setVerifyNotes(wrong);
+    return keys.length;
   }
 
   /** 결과 화면에서 뒤늦게 AI 검토를 붙일 때 */
@@ -877,12 +961,12 @@ export default function App() {
                         }
                         void run(true);
                       }}
-                      disabled={!readyToRun || aiState === "run"}
+                      disabled={!readyToRun || aiState === "run" || filling || verifying}
                       className="h-12 px-5 sm:px-8 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300
                                  text-white font-bold text-lg rounded-lg transition-colors
                                  flex items-center gap-2 shrink-0"
                     >
-                      {aiState === "run" ? (
+                      {aiState === "run" || filling || verifying ? (
                         <Loader2
                           className="w-5 h-5 animate-spin"
                           aria-hidden="true"
@@ -890,7 +974,15 @@ export default function App() {
                       ) : (
                         <Sparkles className="w-5 h-5" aria-hidden="true" />
                       )}
-                      <span>AI까지 검토</span>
+                      <span>
+                        {aiState === "run"
+                          ? "문맥 보는 중"
+                          : filling
+                            ? "빈자리 채우는 중"
+                            : verifying
+                              ? "검수하는 중"
+                              : "AI까지 검토"}
+                      </span>
                       <ArrowRight className="w-4 h-4" aria-hidden="true" />
                     </button>
                   </div>
@@ -1089,7 +1181,7 @@ export default function App() {
                                     key={i}
                                     type="button"
                                     onClick={() =>
-                                      setDecisions((s) => ({
+                                      putDecisions((s) => ({
                                         ...s,
                                         [f.key]: { ...d, pick: i },
                                       }))
@@ -1110,6 +1202,15 @@ export default function App() {
                             대안이 지시문이거나 앞말에 따라 달라지는 경우에는 기계가 고를 수
                             없다. 그럴 때는 손으로 적어 넣게 하고, 적으면 그것을 수정본에 쓴다.
                           */}
+                            {verifyNotes[f.key] && (
+                              <p className="mt-3 flex gap-1.5 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+                                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                                <span>
+                                  <b>검수에서 걸렸습니다</b> — {verifyNotes[f.key]} 그래서 꺼 두었습니다.
+                                </span>
+                              </p>
+                            )}
+
                             {!can && (
                               <div className="mt-3">
                                 <label
@@ -1125,7 +1226,7 @@ export default function App() {
                                   onClick={(e) => e.stopPropagation()}
                                   onChange={(e) => {
                                     const v = e.target.value;
-                                    setDecisions((s) => ({
+                                    putDecisions((s) => ({
                                       ...s,
                                       [f.key]: {
                                         ...d,
@@ -1151,7 +1252,7 @@ export default function App() {
                                 disabled={!rep}
                                 checked={Boolean(d.on && rep)}
                                 onChange={(e) =>
-                                  setDecisions((s) => ({
+                                  putDecisions((s) => ({
                                     ...s,
                                     [f.key]: { ...d, on: e.target.checked },
                                   }))

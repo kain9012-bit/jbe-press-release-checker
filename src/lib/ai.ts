@@ -82,6 +82,9 @@ async function callAnthropic(cfg: AiConfig, user: string, system: string = SYSTE
     body: JSON.stringify({
       model: cfg.model,
       max_tokens: 4000,
+      // 온도 0. 같은 글을 두 번 넣으면 같은 답이 나와야 한다. 안 정해 두면
+      // 회사 기본값(대개 1.0)이라 부를 때마다 답이 달라진다.
+      temperature: 0,
       system,
       messages: [{ role: 'user', content: user }],
     }),
@@ -101,6 +104,7 @@ async function callOpenAI(cfg: AiConfig, user: string, system: string = SYSTEM) 
         { role: 'system', content: system },
         { role: 'user', content: user },
       ],
+      temperature: 0,
       response_format: { type: 'json_object' },
     }),
   });
@@ -119,7 +123,7 @@ async function callGemini(cfg: AiConfig, user: string, system: string = SYSTEM) 
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: system }] },
       contents: [{ role: 'user', parts: [{ text: user }] }],
-      generationConfig: { responseMimeType: 'application/json' },
+      generationConfig: { responseMimeType: 'application/json', temperature: 0 },
     }),
   });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
@@ -428,4 +432,74 @@ export function tenseChanged(before: string, after: string): boolean {
   if (wasPast && nowPresent) return true;
   if (wasPresent && nowPast) return true;
   return false;
+}
+
+/* ------------------------------------------------------------------ */
+/* 검수 — 고쳐 놓은 것을 스스로 다시 본다                                */
+/* ------------------------------------------------------------------ */
+
+const VERIFY_SYSTEM = `당신은 대한민국 공공기관 보도자료를 최종 검수하는 국어 전문가다.
+
+앞 단계에서 원고의 여러 자리를 고쳤다. 그 목록을 준다. **각 고침이 그 문맥에서 옳은지만
+판정하라.** 새로 고칠 곳을 찾는 일이 아니다.
+
+무엇을 잘못이라고 하는가
+- 고친 뒤 문장이 말이 안 되는 것. 조사 받침이 어긋난 것(‘등를’, ‘공연로’).
+- 시제가 앞뒤와 어긋난 것. 이미 있었던 일인데 현재형으로 바뀐 것.
+- **원래가 맞았는데 괜히 바꾼 것.** 특히 ‘높이기(UP)’ 처럼 한글 뒤 괄호에 로마자를 넣은 것은
+  규범에 맞는 형태이니, 괄호를 지운 것은 잘못이다.
+- 작은따옴표나 「 」 안의 표어·행사명·제목을 바꾼 것.
+- 사실관계(수치, 날짜, 기관명, 사람 이름)가 달라진 것.
+
+무엇을 잘못이라고 하지 않는가
+- 취향 차이. 원래도 되고 고친 것도 되면 그냥 둔다.
+- 더 나은 표현이 따로 있다는 것. 여기서는 옳고 그름만 본다.
+
+**옳은 것은 내지 마라. 잘못된 것만 낸다.** 잘못이 없으면 빈 목록을 낸다.
+
+출력은 다른 말 없이 JSON 객체 하나만 낸다.
+{"wrong":[{"id":"준 id 그대로","why":"무엇이 잘못인지 한 문장"}]}`;
+
+export interface EditToCheck {
+  id: string;
+  /** 원래 있던 말 */
+  from: string;
+  /** 갈아 끼운 말 */
+  to: string;
+  /** 고친 뒤의 문장 */
+  after: string;
+}
+
+/**
+ * 고쳐 놓은 자리들을 한 번에 다시 물어 잘못된 것을 골라낸다.
+ *
+ * 모형은 부를 때마다 답이 달라서, 스스로 제대로 붙여 놓은 병기를 다음 번에 떼어 내기도 한다
+ * (실제로 ‘높이기(UP)’ 를 ‘높이기’ 로 되돌린 적이 있다). 사람이 전부 읽어 볼 수는 없으니
+ * 넣기 전에 기계가 한 번 더 본다. **고친 자리만 묻기 때문에 답을 그대로 되돌릴 수 있다.**
+ */
+export async function verifyEdits(
+  cfg: AiConfig,
+  edits: EditToCheck[],
+): Promise<Record<string, string>> {
+  if (edits.length === 0) return {};
+
+  const user = edits
+    .map((e) => `- id: ${e.id}\n  고치기 전: ${e.from}\n  고친 뒤: ${e.to}\n  고친 뒤 문장: ${e.after}`)
+    .join('\n');
+
+  const raw =
+    cfg.provider === 'anthropic'
+      ? await callAnthropic(cfg, user, VERIFY_SYSTEM)
+      : cfg.provider === 'gemini'
+        ? await callGemini(cfg, user, VERIFY_SYSTEM)
+        : await callOpenAI(cfg, user, VERIFY_SYSTEM);
+
+  const parsed = parseJson(raw);
+  const out: Record<string, string> = {};
+  for (const w of parsed.wrong ?? []) {
+    const id = String(w.id ?? '').trim();
+    if (!id) continue;
+    out[id] = String(w.why ?? '').trim() || '검수에서 걸렸습니다.';
+  }
+  return out;
 }
