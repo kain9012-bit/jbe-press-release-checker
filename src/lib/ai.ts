@@ -1,4 +1,11 @@
 import type { Finding } from './analyze';
+import {
+  STEP_IDS,
+  AXIS_OF,
+  procedureText,
+  checkReplacement,
+  type Violation,
+} from './procedure';
 
 export type Provider = 'anthropic' | 'openai' | 'gemini' | 'proxy';
 
@@ -56,32 +63,28 @@ export const KEY_HELP: Record<Provider, string> = {
   proxy: '키가 필요 없습니다. 기관이 대신 냅니다',
 };
 
-const SYSTEM = `당신은 대한민국 공공기관의 보도자료를 국립국어원 공문서등 평가 기준으로 검토하는 국어 전문가다.
+const SYSTEM = `당신은 대한민국 공공기관의 보도자료를 국립국어원 공문서등 평가 기준으로 검토하는
+국어 전문가다. **아래 절차를 1번부터 차례대로 밟는다.** 앞 단계에서 다룬 것은 뒤에서 다시
+꺼내지 않는다.
 
-판정 기준은 다음 세 가지다.
-1) 용이성 — ① 외국 글자(로마자·한자) 사용 ② 우리말로 대체 가능한 외래어·어려운 한자어 ③ 제도명·사업명·행사명에 우리말이 아닌 외국어 표현·표기
-2) 정확성 — ① 표기의 정확성(한글 맞춤법, 표준어 규정, 외래어 표기법, 로마자 표기법) ② 표현의 정확성(주술 호응, 접속, 생략, 조사·어미·어휘 사용 등 비문법적 표현)
-3) 소통성 — ① 이해가능성(어려운 말, 지나치게 긴 문장) ② 공공성(권위적·차별적 표현)
+[절차]
+${procedureText()}
 
-지켜야 할 것
-- 단순 낱말 치환은 이미 규칙 검사가 끝났다. 당신은 **문맥을 봐야 판단할 수 있는 것**에 집중한다.
-  주어와 서술어의 호응, 접속의 대등성, 조사·어미의 생략, 수식 관계의 모호함, 중복·군더더기,
-  한 문장에 정보가 너무 많은 경우, 사업명·행사명에 쓰인 외국어 표현, 권위적·차별적 어조.
-- quote 는 원문에 **글자 그대로** 존재하는 짧은 조각이어야 한다. 지어내지 마라.
-- 확신이 없으면 넣지 마라. 억지로 개수를 채우지 마라.
-- 보도자료의 사실관계(수치, 날짜, 기관명)는 바꾸지 마라.
-- 시제는 **글 전체의 시제에 맞춰라.** 이미 열린 행사를 적은 글이면 과거형으로 통일한다.
-  한 문장만 떼어 보고 고치지 말고 앞뒤 문장의 시제를 보고 판단하라.
+낱말을 하나씩 바꾸는 일은 이미 규칙 검사가 끝냈다. 당신은 **문맥을 봐야 아는 것**만 본다.
 
-**이미 바로잡혀 있는 것을 되돌리지 마라.** 이 글은 한 번 다듬은 것일 수 있다.
-- ‘높이기(UP)’, ‘가상현실(VR)’, ‘인공지능(AI)’ 처럼 **한글을 먼저 적고 괄호 안에 로마자를 넣은
-  것은 이미 규범에 맞는 형태다.** 괄호와 그 안의 로마자를 지우라고 하지 마라. 그것이 바른 표기다.
-- 작은따옴표나 「 」 안에 든 표어·행사명·제목은 그 기관이 정한 이름이다. 로마자 병기를 다는 것
-  말고는 손대지 마라. 표어를 다시 쓰라고 제안하지 마라.
-- 이미 자연스러운 문장을 취향으로 바꾸지 마라. 규범에 어긋난 것만 짚는다.
+[지켜야 할 규약 — 어기면 그 항목은 버려진다]
+- sub 는 위 절차의 대괄호 안 이름을 **글자 그대로** 쓴다. 그 밖의 이름은 받지 않는다.
+- quote 는 원문에 **글자 그대로** 있는 짧은 조각이어야 한다. 지어내지 마라.
+- suggestion 안의 **숫자·날짜·비율은 원래 그대로**여야 한다. 하나라도 다르면 버려진다.
+- ‘높이기(UP)’, ‘가상현실(VR)’ 처럼 한글 뒤 괄호에 로마자를 넣은 것은 **이미 바른 표기다.**
+  괄호를 지우지 마라. 다는 것은 괜찮다.
+- 물결(~)이나 ‘(으)로’ 같은 자리표시를 쓰지 마라. 그대로 끼울 수 있는 완성된 말만 낸다.
+- 작은따옴표나 「 」 안의 표어·행사명·제목은 그 기관이 정한 이름이다. 병기를 다는 것 말고는
+  손대지 마라.
+- 확신이 없으면 넣지 마라. 억지로 개수를 채우지 마라. 취향으로 바꾸지 마라.
 
 출력은 다른 말 없이 JSON 객체 하나만 낸다.
-{"findings":[{"quote":"원문 그대로","suggestion":"고친 표현","axis":"용이성|정확성|소통성","sub":"짧은 지표명","why":"왜 고쳐야 하는지 한 문장"}],
+{"findings":[{"quote":"원문 그대로","suggestion":"고친 표현","sub":"절차의 이름 그대로","why":"왜 고쳐야 하는지 한 문장"}],
  "summary":"초안 전체에 대한 두세 문장 총평"}`;
 
 function buildUserPrompt(text: string, already: Finding[]) {
@@ -183,6 +186,8 @@ export interface AiResult {
   summary: string;
   /** 원문에서 위치를 찾지 못해 버린 지적 수 */
   dropped: number;
+  /** 규약을 어겨 버린 것들 — 무엇을 몇 번 어겼나 */
+  violations: Partial<Record<Violation, number>>;
 }
 
 export async function reviewWithAi(
@@ -201,12 +206,30 @@ export async function reviewWithAi(
   const parsed = parseJson(raw);
   const findings: Finding[] = [];
   let dropped = 0;
+  const violations: Partial<Record<Violation, number>> = {};
+  const broke = (v: Violation) => {
+    violations[v] = (violations[v] ?? 0) + 1;
+    dropped += 1;
+  };
   const used: [number, number][] = [];
 
   for (const f of parsed.findings ?? []) {
     const quote: string = (f.quote ?? '').trim();
     if (!quote) {
       dropped += 1;
+      continue;
+    }
+
+    // 절차에 없는 이름으로 답하면 어느 단계인지 알 수 없다. 받지 않는다.
+    const sub: string = String(f.sub ?? '').trim();
+    if (!STEP_IDS.has(sub)) {
+      broke('지표 이름이 목록에 없음');
+      continue;
+    }
+    const fix = String(f.suggestion ?? '').trim();
+    const bad = fix ? checkReplacement(quote, fix) : null;
+    if (bad) {
+      broke(bad);
       continue;
     }
     let start = -1;
@@ -222,19 +245,20 @@ export async function reviewWithAi(
       from = i + 1;
     }
     if (start < 0) {
-      dropped += 1;
+      broke('원문에 없는 조각을 지어냄');
       continue;
     }
     used.push([start, start + quote.length]);
-    const axis = ['용이성', '정확성', '소통성'].includes(f.axis) ? f.axis : '정확성';
+    // 축은 모형에게 묻지 않는다. 절차가 정해 둔 것을 쓴다.
+    const axis = AXIS_OF[sub] ?? '정확성';
     findings.push({
       key: `ai-${start}-${quote.length}`,
       axis,
-      sub: `AI 검토 — ${f.sub || '문맥 검토'}`,
+      sub: `AI 검토 — ${sub}`,
       start,
       end: start + quote.length,
       text: quote,
-      fixes: [String(f.suggestion ?? '').trim() || '문맥에 맞게 다시 쓰기'],
+      fixes: [fix || '문맥에 맞게 다시 쓰기'],
       why: String(f.why ?? '').trim(),
       src: 'AI 문맥 검토(사람이 최종 확인 필요)',
       severity: '검토',
@@ -242,7 +266,7 @@ export async function reviewWithAi(
     });
   }
 
-  return { findings, summary: String(parsed.summary ?? '').trim(), dropped };
+  return { findings, summary: String(parsed.summary ?? '').trim(), dropped, violations };
 }
 
 /* ------------------------------------------------------------------ */
@@ -438,11 +462,14 @@ export async function fillBlanks(
 
   const parsed = parseJson(raw);
   const out: Record<string, string> = {};
+  const byId = new Map(targets.map((t) => [t.id, t]));
   for (const f of parsed.fills ?? []) {
     const id = String(f.id ?? '').trim();
     const rep = String(f.replacement ?? '').trim();
-    // 자리표시가 섞여 오면 쓰지 않는다. 그대로 넣을 수 있는 말만 받는다.
-    if (!id || !rep || /[~]|\((으|이|가|을|를|과|와|는|은)\)/.test(rep)) continue;
+    const t = byId.get(id);
+    if (!id || !t) continue;
+    // 부탁이 아니라 확인이다. 규약을 어긴 답은 안 쓴다.
+    if (checkReplacement(t.text, rep)) continue;
     out[id] = rep;
   }
   return out;
@@ -533,10 +560,12 @@ export async function verifyEdits(
         : await callOpenAI(cfg, user, VERIFY_SYSTEM);
 
   const parsed = parseJson(raw);
+  const asked = new Set(edits.map((e) => e.id));
   const out: Record<string, string> = {};
   for (const w of parsed.wrong ?? []) {
     const id = String(w.id ?? '').trim();
-    if (!id) continue;
+    // 묻지 않은 것을 잘못이라고 해도 받지 않는다. 검수는 판정만 하는 단계다.
+    if (!id || !asked.has(id)) continue;
     out[id] = String(w.why ?? '').trim() || '검수에서 걸렸습니다.';
   }
   return out;

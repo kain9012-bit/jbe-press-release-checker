@@ -58,6 +58,7 @@ async function onePass(text) {
   for (const k of Object.keys(wrong)) if (probe[k]) probe[k] = { ...probe[k], on: false };
 
   return {
+    violations: ai.violations,
     keys: all.map((f) => `${f.start}:${f.text}`),
     revised: buildRevisedParts(text, all, probe).map((x) => x.text).join(''),
     rejected: Object.keys(wrong).length,
@@ -74,6 +75,9 @@ for (const c of CASES) {
   console.log(`  ① 일관성 ${N}회 — 지적 묶음 겹침 ${pairs ? (sum / pairs * 100).toFixed(1) : 100}%`);
   console.log(`     수정본이 ${new Set(runs.map(r => r.revised)).size}가지 나옴 (1이면 완전히 같음)`);
   console.log(`     검수에서 되돌린 것 ${runs.map(r => r.rejected).join(', ')}건`);
+  const viol = {};
+  for (const r of runs) for (const [k, v] of Object.entries(r.violations)) viol[k] = (viol[k] ?? 0) + v;
+  console.log(`     모형이 규약을 어겨 버린 것 ${Object.entries(viol).map(([k, v]) => `${k} ${v}`).join(', ') || '없음'}`);
 
   const again = await onePass(runs[0].revised);
   console.log(`  ② 멱등성 — 수정본을 다시 넣으니 지적 ${again.keys.length}건`);

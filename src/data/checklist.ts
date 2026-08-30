@@ -66,8 +66,10 @@ export const CHECKLIST: CheckItem[] = [
       '표현의 정확성 — 높임 표현',
       '표기의 정확성 — 괄호 뒤 조사',
       '표기의 정확성 — 조사 받침',
-      '호응',
-      '비문',
+      '조사·어미',
+      '주술 호응',
+      '접속·수식',
+      '시제',
     ],
     partial: '번역 투·피동·높임·괄호 뒤 조사까지만 봅니다. 주술 호응과 비문은 AI 검토를 켜야 봅니다',
   },
@@ -92,7 +94,7 @@ export const CHECKLIST: CheckItem[] = [
     area: '소통성',
     group: '공공성',
     question: '고압적·권위적 표현을 삼갔는가?',
-    match: ['공공성 — 권위적 표현'],
+    match: ['공공성 — 권위적 표현', '권위·차별'],
   },
   {
     id: 'B3',
@@ -115,7 +117,7 @@ export const CHECKLIST: CheckItem[] = [
     group: '정보성',
     question: '정보의 양을 적절하게 제시하였는가?',
     byEye: '누가·언제·어디서·무엇을·왜가 다 있는지, 반대로 기자가 안 쓸 내부 사정까지 적지 않았는지 보세요.',
-    match: ['정보량'],
+    match: ['정보량', '군더더기'],
   },
   {
     id: 'B6',
@@ -130,7 +132,7 @@ export const CHECKLIST: CheckItem[] = [
     area: '소통성',
     group: '용이성',
     question: '문장을 적절한 길이로 작성하였는가?',
-    match: ['이해가능성 — 문장 길이'],
+    match: ['이해가능성 — 문장 길이', '문장 길이'],
   },
   {
     id: 'B8',
@@ -141,6 +143,7 @@ export const CHECKLIST: CheckItem[] = [
       '① 외국 글자(로마자) 사용',
       '① 외국 글자(한자) 사용',
       '② 우리말로 대체 가능한 외래어',
+      '외국어 표현',
     ],
   },
   {
