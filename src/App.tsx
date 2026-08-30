@@ -1038,6 +1038,66 @@ export default function App() {
                 </div>
               </div>
 
+              {/*
+                어떤 단계를 거쳐 나온 결과인지 드러낸다. 안에서 세 번 도는데 화면에는
+                지적 수 하나만 보이면, 규칙만 돌린 것과 끝까지 돌린 것이 같아 보인다.
+              */}
+              <ol className="flex flex-wrap items-stretch gap-2 text-sm">
+                {(
+                  [
+                    {
+                      n: "1차",
+                      name: "규칙 검토",
+                      done: true,
+                      say: `${result.findings.length}건`,
+                      sub: "용어 목록·표기 규범 대조",
+                    },
+                    {
+                      n: "2차",
+                      name: "AI 검토",
+                      done: aiState === "done",
+                      running: aiState === "run" || filling,
+                      say: aiState === "done" ? `${aiFindings.length}건` : "안 돌림",
+                      sub: "조사·호응·비문·군더더기",
+                    },
+                    {
+                      n: "3차",
+                      name: "재검토",
+                      done: aiState === "done" && !verifying,
+                      running: verifying,
+                      say:
+                        aiState === "done" && !verifying
+                          ? Object.keys(verifyNotes).length
+                            ? `${Object.keys(verifyNotes).length}건 되돌림`
+                            : "이상 없음"
+                          : "안 돌림",
+                      sub: "고친 자리를 다시 확인",
+                    },
+                  ] as const
+                ).map((st) => (
+                  <li
+                    key={st.n}
+                    className={`flex-1 min-w-[10rem] rounded-lg border px-3 py-2 ${
+                      st.done
+                        ? "border-slate-300 bg-white"
+                        : "border-dashed border-slate-300 bg-slate-50 text-slate-400"
+                    }`}
+                  >
+                    <p className="flex items-center gap-1.5 font-bold text-slate-900">
+                      {"running" in st && st.running && (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" aria-hidden="true" />
+                      )}
+                      <span className={st.done ? "text-slate-400" : ""}>{st.n}</span>
+                      <span className={st.done ? "" : "text-slate-400"}>{st.name}</span>
+                      <span className={`ml-auto ${st.done ? "text-blue-700" : "text-slate-400"}`}>
+                        {st.say}
+                      </span>
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-500">{st.sub}</p>
+                  </li>
+                ))}
+              </ol>
+
               <p className="text-xs text-slate-500">
                 자동 검사로 걸린 것만 센 것이고, 실제 평가 점수가 아닙니다.
               </p>
