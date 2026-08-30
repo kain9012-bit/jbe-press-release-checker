@@ -43,6 +43,7 @@ export const EMITTABLE_SUBS: string[] = [
   '② 일본어 투 용어',
   '표기의 정확성 — 두음 법칙',
   '표기의 정확성 — 괄호 뒤 조사',
+  '표기의 정확성 — 조사 받침',
   '이해가능성 — 문장 길이',
   ...new Set(PATTERN_RULES.map((r) => r.sub)),
 ];
@@ -335,6 +336,55 @@ export function analyze(text: string): AnalyzeResult {
       severity: '오류',
       counted: true,
     });
+  }
+
+  /*
+   * --- 6-2. 조사 받침 (기계가 확실히 아는 것만) ---
+   *
+   * 조사 받침은 규칙으로 보이지만 대부분 위험하다. ‘로’ 로 끝나는 낱말은 진로·경로·
+   * 등산로처럼 널려 있고, ‘가’ 는 평가·물가·국가, ‘는’ 은 먹는·없는·읽는이 걸린다.
+   * 가진 자료로 재 보니 그 갈래들은 저마다 열몇 개씩 오탐이 났다.
+   *
+   * 그런데 **딱 두 갈래는 오탐이 하나도 없다.**
+   *   ① 받침(ㄹ 제외) 뒤의 ‘를’ — 그 자리에 오는 우리말 낱말이 없다.
+   *      (ㄹ 받침은 뺀다. ‘잠깐 들를 예정’ 의 ‘들를’ 이 진짜 말이다.)
+   *   ② 받침 없는 글자 뒤의 ‘으로’ — 마찬가지로 그런 낱말이 없다.
+   * 이 둘만 잡는다. 넓히지 않는다.
+   *
+   * AI 도 이걸 잡기는 하지만 부를 때마다 답이 달라진다(실제로 ‘등를’ 을 놓친 적이
+   * 있다). 규칙은 매번 같은 답을 낸다. 그래서 기계가 확실한 것은 규칙이 맡는다.
+   */
+  {
+    const JOSA_FIX: [RegExp, string, string][] = [
+      [/([가-힣])를(?=[\s,.)\]"'’”」』]|$)/g, '를', '을'],
+      [/([가-힣])으로(?=[\s,.)\]]|$)/g, '으로', '로'],
+    ];
+    for (const [re, wrong, right] of JOSA_FIX) {
+      re.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text))) {
+        const prev = m[1];
+        const code = prev.charCodeAt(0) - 0xac00;
+        const batchim = code % 28;
+        const wantsEul = wrong === '를';
+        // ‘를’ 은 받침이 있을 때(ㄹ 빼고) 틀린 것, ‘으로’ 는 받침이 없을 때 틀린 것
+        const isWrong = wantsEul ? batchim !== 0 && batchim !== 8 : batchim === 0;
+        if (!isWrong) continue;
+        const start = m.index + prev.length;
+        push({
+          axis: '정확성',
+          sub: '표기의 정확성 — 조사 받침',
+          start,
+          end: start + wrong.length,
+          text: wrong,
+          fixes: [right],
+          why: `앞말 ‘${prev}’ 의 받침에 맞지 않는다. ‘${prev}${right}’ 로 적는다.`,
+          src: '[평가] 정확성 ② 표현의 정확성 · 조사 사용',
+          severity: '오류',
+          counted: true,
+        });
+      }
+    }
   }
 
   /* --- 7. 괄호 뒤 조사 --- */
