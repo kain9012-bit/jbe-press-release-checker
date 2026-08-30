@@ -829,7 +829,7 @@ export default function App() {
                   <p className="rounded-md bg-white/60 px-3 py-2 text-slate-600">
                     <b className="text-slate-800">규칙으로만 검토</b> — 용어 목록과 표기 규범만 대조합니다.
                     조사가 틀렸는지, 문장이 말이 되는지는 <b className="text-slate-800">보지 않습니다.</b>{" "}
-                    키가 없거나 대외비 원고일 때 쓰는 반쪽 검사입니다.
+                    아직 키를 넣지 않았을 때 쓰는 반쪽 검사입니다.
                   </p>
                 </div>
 
@@ -1469,8 +1469,9 @@ export default function App() {
                 합니다.
               </p>
               <p className="text-sm text-slate-300">
-                원고와 올린 파일은 브라우저 안에서만 처리하며, AI 검토를 켠
-                경우에만 지정한 사업자에게 전송됩니다.
+                원고와 올린 파일은 브라우저 안에서만 처리합니다. AI 검토를 켜면
+                제목·부제·본문만 지정한 사업자에게 전송되고, 담당자 이름과
+                전화번호는 보내지 않습니다.
               </p>
             </div>
             <div className="text-sm text-slate-300 md:text-right space-y-1">

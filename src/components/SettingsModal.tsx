@@ -77,8 +77,9 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
           <p className="flex gap-2 rounded-md bg-slate-50 p-3 text-sm text-slate-700">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-green-600" aria-hidden />
             <span>
-              키는 이 브라우저에만 저장되고 서버로 보내지 않습니다. 검토를 누를 때 원고가 선택한 회사의
-              모형에 직접 전송되므로, <b>대외비 원고는 키를 넣지 말고 규칙 검사만</b> 쓰시기 바랍니다.
+              키는 이 브라우저에만 저장되고 서버로 보내지 않습니다. 검토를 누르면 <b>제목·부제·본문</b>이
+              선택한 회사의 모형으로 갑니다. <b>담당자 이름과 전화번호는 보내지 않습니다</b> — 머리말은
+              검사 대상이 아니라 브라우저 안에만 있습니다.
             </span>
           </p>
 
