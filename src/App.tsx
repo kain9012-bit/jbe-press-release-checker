@@ -1005,7 +1005,9 @@ export default function App() {
                       {shown.map((f) => {
                         const d = decisions[f.key] ?? { on: false, pick: 0 };
                         const can = isApplicable(f.fixes[d.pick] ?? "");
-                        const rep = replacementFor(f, d);
+                        // source 를 같이 넘긴다. 안 넘기면 카드에는 ‘로’ 라고
+                        // 적히는데 수정본에는 ‘으로’ 가 들어가서 말이 달라진다.
+                        const rep = replacementFor(f, d, source);
                         return (
                           <li
                             key={f.key}
@@ -1018,7 +1020,7 @@ export default function App() {
                             }}
                             className={`${CARD} p-4 cursor-pointer transition-colors ${
                               active === f.key
-                                ? "border-blue-600 ring-2 ring-blue-600/30"
+                                ? "border-slate-900 ring-2 ring-slate-900/20"
                                 : "hover:border-slate-300"
                             }`}
                           >

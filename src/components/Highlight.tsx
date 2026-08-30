@@ -7,6 +7,16 @@ const TONE: Record<string, string> = {
   소통성: 'bg-amber-50 border-b-2 border-amber-500',
 };
 
+/**
+ * 고른 자리는 아예 색을 뒤집는다.
+ *
+ * 예전에는 옅은 색 위에 가느다란 테를 둘렀는데, 칠한 자리가 열댓 개씩 있는 글에서는
+ * 그 테가 눈에 안 띄었다. 축 색깔(파랑·빨강·노랑)과 겹치지 않는 검정으로 뒤집으면
+ * 목록에서 눌러 굴러왔을 때 어디를 봐야 하는지 한눈에 들어온다.
+ */
+const ACTIVE =
+  'bg-slate-900 text-white font-bold ring-2 ring-slate-900 ring-offset-2 rounded';
+
 interface Props {
   text: string;
   findings: Finding[];
@@ -35,9 +45,8 @@ export default function Highlight({ text, findings, activeKey, onPick, markRefs 
         }}
         onClick={() => onPick(f.key)}
         title={`${f.axis} · ${f.sub}`}
-        className={`${TONE[f.axis] ?? 'bg-slate-100'} ${
-          active ? 'ring-2 ring-slate-900 ring-offset-1' : ''
-        } cursor-pointer scroll-mt-28 rounded-sm px-[1px] text-left transition-colors`}
+        className={`${active ? ACTIVE : (TONE[f.axis] ?? 'bg-slate-100')}
+          cursor-pointer scroll-mt-28 rounded-sm px-[1px] text-left transition-colors`}
       >
         {text.slice(f.start, f.end)}
       </button>,
