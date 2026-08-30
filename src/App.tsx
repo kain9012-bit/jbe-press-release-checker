@@ -814,13 +814,22 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 두 방식의 차이를 고르기 전에 알려 준다 */}
-                <div className="grid gap-2 sm:grid-cols-2 text-sm">
-                  <p className="rounded-md bg-white/70 px-3 py-2 text-slate-700">
-                    <b className="text-slate-900">규칙으로 검토</b> — 용어 목록과 어문 규범으로 대조합니다.
+                {/*
+                  두 방식을 나란히 놓으면 고르는 사람은 둘이 대등한 줄 안다. 아니다.
+                  규칙은 낱말을 대조할 뿐이라 조사·호응·비문은 아예 못 본다. 그걸 제대로
+                  보려면 형태소 분석기가 있어야 하는데 그 모델이 104MB 라 웹페이지에
+                  실을 수 없다. 규칙을 덜 만들어서가 아니라 구조적으로 안 되는 일이다.
+                  그러니 화면이 그렇게 말해야 한다.
+                */}
+                <div className="space-y-2 text-sm">
+                  <p className="rounded-md bg-white px-3 py-2 text-slate-700">
+                    <b className="text-slate-900">AI까지 검토</b> — 용어·표기에 더해{" "}
+                    <b className="text-slate-900">조사·호응·비문·군더더기</b>까지 봅니다. 이쪽을 쓰세요.
                   </p>
-                  <p className="rounded-md bg-white/70 px-3 py-2 text-slate-700">
-                    <b className="text-slate-900">AI까지 검토</b> — 여기에 호응·비문·군더더기까지 봅니다.
+                  <p className="rounded-md bg-white/60 px-3 py-2 text-slate-600">
+                    <b className="text-slate-800">규칙으로만 검토</b> — 용어 목록과 표기 규범만 대조합니다.
+                    조사가 틀렸는지, 문장이 말이 되는지는 <b className="text-slate-800">보지 않습니다.</b>{" "}
+                    키가 없거나 대외비 원고일 때 쓰는 반쪽 검사입니다.
                   </p>
                 </div>
 
@@ -850,12 +859,12 @@ export default function App() {
                       type="button"
                       onClick={() => void run(false)}
                       disabled={!readyToRun}
-                      className="h-12 px-5 sm:px-8 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300
-                                 text-white font-bold text-lg rounded-lg transition-colors
+                      className="h-12 px-4 sm:px-6 rounded-lg border border-slate-300 bg-white
+                                 text-slate-700 font-bold hover:border-blue-600 hover:text-blue-700
+                                 transition-colors disabled:text-slate-400 disabled:border-slate-200
                                  flex items-center gap-2 shrink-0"
                     >
-                      <span>규칙으로 검토</span>
-                      <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                      <span>규칙으로만 검토</span>
                     </button>
                     <button
                       type="button"
@@ -869,9 +878,8 @@ export default function App() {
                         void run(true);
                       }}
                       disabled={!readyToRun || aiState === "run"}
-                      className="h-12 px-5 sm:px-8 rounded-lg border-2 border-blue-600 bg-white
-                                 text-blue-700 font-bold text-lg hover:bg-blue-100 transition-colors
-                                 disabled:border-slate-300 disabled:text-slate-400
+                      className="h-12 px-5 sm:px-8 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300
+                                 text-white font-bold text-lg rounded-lg transition-colors
                                  flex items-center gap-2 shrink-0"
                     >
                       {aiState === "run" ? (
@@ -883,6 +891,7 @@ export default function App() {
                         <Sparkles className="w-5 h-5" aria-hidden="true" />
                       )}
                       <span>AI까지 검토</span>
+                      <ArrowRight className="w-4 h-4" aria-hidden="true" />
                     </button>
                   </div>
                 </div>
@@ -931,6 +940,23 @@ export default function App() {
               <p className="text-xs text-slate-500">
                 자동 검사로 걸린 것만 센 것이고, 실제 평가 점수가 아닙니다.
               </p>
+
+              {/*
+                규칙만 돌린 결과를 그냥 내놓으면 '검토 끝' 으로 읽힌다. 안 본 것이
+                무엇인지 그 자리에서 밝힌다. 자가검증 도구가 잘못 괜찮다고 말하는 것은
+                아무 말도 안 하느니만 못하다.
+              */}
+              {aiFindings.length === 0 && aiState !== "run" && (
+                <Notice tone="amber" title="조사·호응·비문은 아직 안 봤습니다">
+                  규칙은 용어 목록과 표기 규범을 대조할 뿐입니다. ‘공연로’ 처럼 조사가
+                  틀린 것, 주어와 서술어가 어긋난 것, 군더더기는{" "}
+                  <b>이 검사에 걸리지 않습니다</b>(‘진로’ 는 낱말이고 ‘공연로’ 는 조사인
+                  것을 가리려면 형태소 분석기가 있어야 하는데, 그 모델이 104MB 라
+                  웹페이지에 실을 수 없습니다).
+                  <br />
+                  제대로 보시려면 <b>AI 문맥 검토</b>를 같이 돌리세요.
+                </Notice>
+              )}
 
               {aiState === "fail" && (
                 <Notice tone="red" title="AI 검토를 하지 못했습니다">
