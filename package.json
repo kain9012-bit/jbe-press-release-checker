@@ -7,7 +7,9 @@
     "dev": "vite --port=3100 --host=0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "bench": "node bench/build-lib.mjs && node bench/rules.mjs && node bench/worker.test.mjs",
+    "bench:ai": "node bench/build-lib.mjs && node bench/consistency.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",

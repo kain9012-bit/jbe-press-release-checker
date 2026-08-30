@@ -24,6 +24,7 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
   const [listError, setListError] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const viaProxy = cfg.provider === 'proxy';
 
   async function runTest() {
     setTesting(true);
@@ -76,11 +77,19 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
         <div className="space-y-5 px-5 py-5">
           <p className="flex gap-2 rounded-md bg-slate-50 p-3 text-sm text-slate-700">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-green-600" aria-hidden />
+            {viaProxy ? (
+            <span>
+              기관이 마련한 중계 서버로 검토합니다. <b>키를 넣을 필요가 없습니다.</b> 원고
+              (제목·부제·본문)는 그 서버를 거쳐 구글 제미나이로 가고, 담당자 이름과 전화번호는
+              보내지 않습니다.
+            </span>
+            ) : (
             <span>
               키는 이 브라우저에만 저장되고 서버로 보내지 않습니다. 검토를 누르면 <b>제목·부제·본문</b>이
               선택한 회사의 모형으로 갑니다. <b>담당자 이름과 전화번호는 보내지 않습니다</b> — 머리말은
               검사 대상이 아니라 브라우저 안에만 있습니다.
             </span>
+            )}
           </p>
 
           <div>
@@ -107,6 +116,7 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
             </select>
           </div>
 
+          {!viaProxy && (
           <div>
             <label className="mb-1.5 block text-sm font-bold text-slate-700" htmlFor="apikey">
               API 키
@@ -122,6 +132,7 @@ export default function SettingsModal({ value, onSave, onClose }: Props) {
             />
             <p className="mt-1 text-xs text-slate-500">{KEY_HELP[cfg.provider]}</p>
           </div>
+          )}
 
           <div>
             <div className="mb-1.5 flex items-end justify-between gap-2">

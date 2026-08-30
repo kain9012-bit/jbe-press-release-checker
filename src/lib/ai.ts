@@ -1,6 +1,28 @@
 import type { Finding } from './analyze';
 
-export type Provider = 'anthropic' | 'openai' | 'gemini';
+export type Provider = 'anthropic' | 'openai' | 'gemini' | 'proxy';
+
+/**
+ * 기관 중계 서버 주소. 빌드할 때 VITE_PROXY_URL 로 넣는다.
+ *
+ * 이건 비밀이 아니다. 그냥 주소다. 비밀인 API 키는 그 서버 안에만 있다.
+ * 이 값이 있으면 부서 담당자는 설정을 만질 필요 없이 그냥 검토를 누르면 된다.
+ */
+export const PROXY_URL: string = (import.meta.env?.VITE_PROXY_URL ?? '').trim();
+export const hasProxy = () => PROXY_URL.length > 0;
+
+/** 중계 서버가 열어 둔 모형 (worker.js 의 ALLOWED_MODELS 와 맞춘다) */
+export const PROXY_MODELS = [
+  'gemini-3.6-flash',
+  'gemini-3.7-flash',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+] as const;
+
+/** 물어볼 준비가 됐는지. 중계 서버를 쓰면 키가 필요 없다. */
+export function isConfigured(cfg: AiConfig): boolean {
+  return cfg.provider === 'proxy' ? hasProxy() : Boolean(cfg.apiKey.trim());
+}
 
 export interface AiConfig {
   provider: Provider;
@@ -17,18 +39,21 @@ export const DEFAULT_MODEL: Record<Provider, string> = {
   anthropic: 'claude-sonnet-4-5-20250929',
   openai: 'gpt-4o-mini',
   gemini: 'gemini-3.6-flash',
+  proxy: 'gemini-3.6-flash',
 };
 
 export const PROVIDER_LABEL: Record<Provider, string> = {
   anthropic: '앤트로픽 클로드',
   openai: '오픈에이아이',
   gemini: '구글 제미나이',
+  proxy: '기관 중계 서버 (키 없이 바로)',
 };
 
 export const KEY_HELP: Record<Provider, string> = {
   anthropic: 'console.anthropic.com 에서 발급한 키(sk-ant-…)',
   openai: 'platform.openai.com 에서 발급한 키(sk-…)',
   gemini: 'aistudio.google.com 에서 발급한 키(AIza…)',
+  proxy: '키가 필요 없습니다. 기관이 대신 냅니다',
 };
 
 const SYSTEM = `당신은 대한민국 공공기관의 보도자료를 국립국어원 공문서등 평가 기준으로 검토하는 국어 전문가다.
@@ -113,10 +138,23 @@ async function callOpenAI(cfg: AiConfig, user: string, system: string = SYSTEM) 
   return data.choices?.[0]?.message?.content ?? '';
 }
 
-async function callGemini(cfg: AiConfig, user: string, system: string = SYSTEM) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+/**
+ * 제미나이를 부를 주소.
+ *
+ * 중계 서버를 쓰면 키를 붙이지 않는다. 키는 그 서버 안에만 있다.
+ * 브라우저가 읽을 수 있는 것은 사람도 읽을 수 있으므로, 정적 웹페이지에 키를 둘 자리는 없다.
+ */
+export function geminiUrl(cfg: AiConfig): string {
+  if (cfg.provider === 'proxy') {
+    return `${PROXY_URL.replace(/\/+$/, '')}/${encodeURIComponent(cfg.model)}`;
+  }
+  return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     cfg.model,
   )}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
+}
+
+async function callGemini(cfg: AiConfig, user: string, system: string = SYSTEM) {
+  const url = geminiUrl(cfg);
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -246,6 +284,9 @@ function rankModels(ids: string[]): string[] {
  * 한 번 불러 보게 해 둔다.
  */
 export async function listModels(cfg: AiConfig): Promise<string[]> {
+  // 중계 서버는 정해 둔 모형만 받는다. 목록을 물어볼 곳이 없으니 그대로 돌려준다.
+  if (cfg.provider === 'proxy') return [...PROXY_MODELS];
+
   if (!cfg.apiKey.trim()) throw new Error('먼저 API 키를 넣어 주세요.');
 
   if (cfg.provider === 'gemini') {
@@ -295,11 +336,8 @@ export async function listModels(cfg: AiConfig): Promise<string[]> {
 export async function testModel(cfg: AiConfig): Promise<void> {
   const ping = '안녕하세요라고만 답하세요.';
 
-  if (cfg.provider === 'gemini') {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-      cfg.model,
-    )}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
-    const res = await fetch(url, {
+  if (cfg.provider === 'gemini' || cfg.provider === 'proxy') {
+    const res = await fetch(geminiUrl(cfg), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -490,7 +528,7 @@ export async function verifyEdits(
   const raw =
     cfg.provider === 'anthropic'
       ? await callAnthropic(cfg, user, VERIFY_SYSTEM)
-      : cfg.provider === 'gemini'
+      : cfg.provider === 'gemini' || cfg.provider === 'proxy'
         ? await callGemini(cfg, user, VERIFY_SYSTEM)
         : await callOpenAI(cfg, user, VERIFY_SYSTEM);
 

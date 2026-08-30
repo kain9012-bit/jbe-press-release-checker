@@ -52,6 +52,8 @@ import {
   fillBlanks,
   tenseChanged,
   verifyEdits,
+  hasProxy,
+  isConfigured,
   type AiConfig,
   type EditToCheck,
   type BlankTarget,
@@ -84,14 +86,21 @@ const CFG_KEY_OLD = "prc.ai.config.v1";
  * 모형 이름은 버린다.** 이름은 설정 창에서 목록을 받아 고르는 것이 맞다.
  */
 function loadCfg(): AiConfig {
-  const fallback: AiConfig = {
-    provider: "anthropic",
-    apiKey: "",
-    model: DEFAULT_MODEL.anthropic,
-  };
+  // 기관이 중계 서버를 두었으면 그것이 기본이다. 담당자는 키를 구할 일도,
+  // 설정을 열 일도 없다. 그게 부서에 돌릴 수 있는 유일한 모양이다.
+  const fallback: AiConfig = hasProxy()
+    ? { provider: "proxy", apiKey: "", model: DEFAULT_MODEL.proxy }
+    : { provider: "anthropic", apiKey: "", model: DEFAULT_MODEL.anthropic };
   try {
     const raw = localStorage.getItem(CFG_KEY);
-    if (raw) return JSON.parse(raw) as AiConfig;
+    if (raw) {
+      const saved = JSON.parse(raw) as AiConfig;
+      // 키도 없이 남의 회사를 골라 둔 상태면 중계 쪽이 낫다
+      if (hasProxy() && !saved.apiKey?.trim() && saved.provider !== "proxy") {
+        return fallback;
+      }
+      return saved;
+    }
 
     const old = localStorage.getItem(CFG_KEY_OLD);
     if (old) {
@@ -274,7 +283,7 @@ export default function App() {
    */
   async function fillWithAi() {
     if (blanks.length === 0) return;
-    if (!cfg.apiKey) {
+    if (!isConfigured(cfg)) {
       setAfterKey('fill');
       setShowCfg(true);
       return;
@@ -595,7 +604,7 @@ export default function App() {
   /** 결과 화면에서 뒤늦게 AI 검토를 붙일 때 */
   function addAi() {
     if (!result) return;
-    if (!cfg.apiKey) {
+    if (!isConfigured(cfg)) {
       setAfterKey("add");
       setShowCfg(true);
       return;
@@ -607,7 +616,7 @@ export default function App() {
   function onSaveCfg(v: AiConfig) {
     setCfg(v);
     setShowCfg(false);
-    if (!v.apiKey.trim() || !afterKey) return;
+    if (!isConfigured(v) || !afterKey) return;
     const next = afterKey;
     setAfterKey(null);
     if (next === "run") void run(true);
@@ -954,7 +963,7 @@ export default function App() {
                       type="button"
                       onClick={() => {
                         if (!readyToRun) return;
-                        if (!cfg.apiKey) {
+                        if (!isConfigured(cfg)) {
                           setAfterKey("run");
                           setShowCfg(true);
                           return;
