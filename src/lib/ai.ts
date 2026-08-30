@@ -1,11 +1,6 @@
 import type { Finding } from './analyze';
-import {
-  STEP_IDS,
-  AXIS_OF,
-  procedureText,
-  checkReplacement,
-  type Violation,
-} from './procedure';
+import { AXIS_OF, STEP_IDS, procedureText, checkReplacement } from './procedure';
+import { guard2, guard3, type Tally } from './stages';
 
 export type Provider = 'anthropic' | 'openai' | 'gemini' | 'proxy';
 
@@ -87,6 +82,28 @@ ${procedureText()}
 {"findings":[{"quote":"원문 그대로","suggestion":"고친 표현","sub":"절차의 이름 그대로","why":"왜 고쳐야 하는지 한 문장"}],
  "summary":"초안 전체에 대한 두세 문장 총평"}`;
 
+/** 2차가 낼 수 있는 모양. 이 밖의 것은 모형이 만들지도 못한다. */
+const REVIEW_SCHEMA = {
+  type: 'object',
+  properties: {
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          quote: { type: 'string' },
+          suggestion: { type: 'string' },
+          sub: { type: 'string', enum: [...STEP_IDS] },
+          why: { type: 'string' },
+        },
+        required: ['quote', 'suggestion', 'sub', 'why'],
+      },
+    },
+    summary: { type: 'string' },
+  },
+  required: ['findings', 'summary'],
+};
+
 function buildUserPrompt(text: string, already: Finding[]) {
   const dup = Array.from(new Set(already.map((f) => f.text))).slice(0, 120);
   return `[규칙 검사에서 이미 잡은 표현 — 다시 지적하지 말 것]
@@ -156,7 +173,12 @@ export function geminiUrl(cfg: AiConfig): string {
   )}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
 }
 
-async function callGemini(cfg: AiConfig, user: string, system: string = SYSTEM) {
+async function callGemini(
+  cfg: AiConfig,
+  user: string,
+  system: string = SYSTEM,
+  schema?: unknown,
+) {
   const url = geminiUrl(cfg);
   const res = await fetch(url, {
     method: 'POST',
@@ -164,7 +186,13 @@ async function callGemini(cfg: AiConfig, user: string, system: string = SYSTEM) 
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: system }] },
       contents: [{ role: 'user', parts: [{ text: user }] }],
-      generationConfig: { responseMimeType: 'application/json', temperature: 0 },
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0,
+        // 나온 뒤에 걸러 내는 것보다 애초에 그 모양만 나오게 하는 편이 낫다.
+        // sub 는 절차의 여덟 이름 중에서만 고를 수 있다.
+        ...(schema ? { responseSchema: schema } : {}),
+      },
     }),
   });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
@@ -187,86 +215,104 @@ export interface AiResult {
   /** 원문에서 위치를 찾지 못해 버린 지적 수 */
   dropped: number;
   /** 규약을 어겨 버린 것들 — 무엇을 몇 번 어겼나 */
-  violations: Partial<Record<Violation, number>>;
+  violations: Tally;
+  /** 실제로 물어본 횟수 */
+  rounds: number;
+  /** 표가 모자라 버린 지적 수 (한 번만 나온 것) */
+  thin: number;
 }
+
+/**
+ * 몇 번 돌려 표를 셀 것인가.
+ *
+ * 온도를 0 으로 못 박아도 답이 완전히 같지는 않다(회사 쪽 배치 처리 탓이다).
+ * 그래서 같은 글을 여러 번 물어 **여러 번 나온 것만 채택한다.**
+ * 한 번만 나온 지적은 대개 헛것이고, 이것이 답이 들쑥날쑥한 것을 가장 크게 줄인다.
+ * 세 번을 한꺼번에 물어보므로 기다리는 시간은 거의 그대로다.
+ */
+export const ROUNDS = 3;
+export const MIN_VOTES = 2;
 
 export async function reviewWithAi(
   cfg: AiConfig,
   text: string,
   already: Finding[],
+  rounds: number = ROUNDS,
 ): Promise<AiResult> {
   const user = buildUserPrompt(text, already);
-  const raw =
-    cfg.provider === 'anthropic'
-      ? await callAnthropic(cfg, user)
-      : cfg.provider === 'openai'
-        ? await callOpenAI(cfg, user)
-        : await callGemini(cfg, user);
-
-  const parsed = parseJson(raw);
-  const findings: Finding[] = [];
-  let dropped = 0;
-  const violations: Partial<Record<Violation, number>> = {};
-  const broke = (v: Violation) => {
-    violations[v] = (violations[v] ?? 0) + 1;
-    dropped += 1;
+  const ask = async () => {
+    const raw =
+      cfg.provider === 'anthropic'
+        ? await callAnthropic(cfg, user)
+        : cfg.provider === 'gemini' || cfg.provider === 'proxy'
+          ? await callGemini(cfg, user, SYSTEM, REVIEW_SCHEMA)
+          : await callOpenAI(cfg, user);
+    return parseJson(raw);
   };
+
+  // 한꺼번에 물어본다. 하나가 실패해도 나머지로 표를 센다.
+  const settled = await Promise.allSettled(
+    Array.from({ length: Math.max(1, rounds) }, () => ask()),
+  );
+  const answers = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+  if (answers.length === 0) {
+    const first = settled[0];
+    throw first && first.status === 'rejected' ? first.reason : new Error('AI 응답이 없습니다.');
+  }
+  const need = answers.length >= 2 ? Math.min(MIN_VOTES, answers.length) : 1;
+
+  const violations: Tally = {};
+  const taken: [number, number][] = already.map((f) => [f.start, f.end]);
+
+  // 회차마다 같은 자리를 같은 이름으로 짚었는지로 표를 센다
+  const votes = new Map<
+    string,
+    { n: number; quote: string; fix: string; sub: string; start: number; why: string }
+  >();
+  for (const parsed of answers) {
+    const seen = new Set<string>();
+    for (const raw2 of parsed.findings ?? []) {
+      const ok = guard2(raw2, text, taken, violations);
+      if (!ok) continue;
+      const id = `${ok.start}:${ok.quote}:${ok.sub}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const got = votes.get(id);
+      if (got) got.n += 1;
+      else votes.set(id, { n: 1, ...ok, why: String(raw2.why ?? '').trim() });
+    }
+  }
+
+  const findings: Finding[] = [];
   const used: [number, number][] = [];
-
-  for (const f of parsed.findings ?? []) {
-    const quote: string = (f.quote ?? '').trim();
-    if (!quote) {
-      dropped += 1;
+  let thin = 0;
+  for (const v of [...votes.values()].sort((a2, b2) => b2.n - a2.n || a2.start - b2.start)) {
+    if (v.n < need) {
+      thin += 1;
       continue;
     }
-
-    // 절차에 없는 이름으로 답하면 어느 단계인지 알 수 없다. 받지 않는다.
-    const sub: string = String(f.sub ?? '').trim();
-    if (!STEP_IDS.has(sub)) {
-      broke('지표 이름이 목록에 없음');
-      continue;
-    }
-    const fix = String(f.suggestion ?? '').trim();
-    const bad = fix ? checkReplacement(quote, fix) : null;
-    if (bad) {
-      broke(bad);
-      continue;
-    }
-    let start = -1;
-    let from = 0;
-    // 이미 잡은 자리와 겹치지 않는 첫 위치를 찾는다.
-    while (true) {
-      const i = text.indexOf(quote, from);
-      if (i < 0) break;
-      if (!used.some(([a, b]) => i < b && a < i + quote.length)) {
-        start = i;
-        break;
-      }
-      from = i + 1;
-    }
-    if (start < 0) {
-      broke('원문에 없는 조각을 지어냄');
-      continue;
-    }
-    used.push([start, start + quote.length]);
-    // 축은 모형에게 묻지 않는다. 절차가 정해 둔 것을 쓴다.
-    const axis = AXIS_OF[sub] ?? '정확성';
+    if (used.some(([a2, b2]) => v.start < b2 && a2 < v.start + v.quote.length)) continue;
+    used.push([v.start, v.start + v.quote.length]);
     findings.push({
-      key: `ai-${start}-${quote.length}`,
-      axis,
-      sub: `AI 검토 — ${sub}`,
-      start,
-      end: start + quote.length,
-      text: quote,
-      fixes: [fix || '문맥에 맞게 다시 쓰기'],
-      why: String(f.why ?? '').trim(),
-      src: 'AI 문맥 검토(사람이 최종 확인 필요)',
+      key: `ai-${v.start}-${v.quote.length}`,
+      axis: AXIS_OF[v.sub] ?? '정확성',
+      sub: `AI 검토 — ${v.sub}`,
+      start: v.start,
+      end: v.start + v.quote.length,
+      text: v.quote,
+      fixes: [v.fix || '문맥에 맞게 다시 쓰기'],
+      why: v.why,
+      src: `AI 문맥 검토 ${answers.length}회 중 ${v.n}회 지목(사람이 최종 확인 필요)`,
       severity: '검토',
       counted: false,
     });
   }
+  findings.sort((a2, b2) => a2.start - b2.start);
 
-  return { findings, summary: String(parsed.summary ?? '').trim(), dropped, violations };
+  const summary =
+    answers.map((a2) => String(a2.summary ?? '').trim()).find(Boolean) ?? '';
+  const dropped = Object.values(violations).reduce((a2, b2) => a2 + b2, 0);
+  return { findings, summary, dropped, violations, rounds: answers.length, thin };
 }
 
 /* ------------------------------------------------------------------ */
@@ -560,13 +606,5 @@ export async function verifyEdits(
         : await callOpenAI(cfg, user, VERIFY_SYSTEM);
 
   const parsed = parseJson(raw);
-  const asked = new Set(edits.map((e) => e.id));
-  const out: Record<string, string> = {};
-  for (const w of parsed.wrong ?? []) {
-    const id = String(w.id ?? '').trim();
-    // 묻지 않은 것을 잘못이라고 해도 받지 않는다. 검수는 판정만 하는 단계다.
-    if (!id || !asked.has(id)) continue;
-    out[id] = String(w.why ?? '').trim() || '검수에서 걸렸습니다.';
-  }
-  return out;
+  return guard3(parsed.wrong ?? [], new Set(edits.map((e) => e.id)), {});
 }

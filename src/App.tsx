@@ -49,6 +49,8 @@ import {
 import {
   DEFAULT_MODEL,
   reviewWithAi,
+  ROUNDS,
+  MIN_VOTES,
   fillBlanks,
   tenseChanged,
   verifyEdits,
@@ -1058,7 +1060,10 @@ export default function App() {
                       done: aiState === "done",
                       running: aiState === "run" || filling,
                       say: aiState === "done" ? `${aiFindings.length}건` : "안 돌림",
-                      sub: "조사·호응·비문·군더더기",
+                      sub:
+                        aiState === "done"
+                          ? `${ROUNDS}회 물어 ${MIN_VOTES}회 이상 나온 것만`
+                          : "조사·호응·비문·군더더기",
                     },
                     {
                       n: "3차",

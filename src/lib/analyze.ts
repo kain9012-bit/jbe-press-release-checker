@@ -1,3 +1,4 @@
+import { guard1, type Tally } from './stages';
 import { PATTERN_RULES, EXTRA_LOANWORDS, ROMAN_KOREAN, checkDueum, type Axis } from '../data/rules';
 import termsRaw from '../data/terms.json';
 import appendixRaw from '../data/appendix.json';
@@ -128,6 +129,8 @@ const EXTRA_RE = buildMatcher([...extraIndex.keys()]);
 /* ------------------------------------------------------------------ */
 
 export interface AnalyzeResult {
+  /** 1차 하네스에 걸려 버린 것 (규칙 쪽 버그) */
+  ruleViolations: Tally;
   findings: Finding[];
   wordCount: number;
   charCount: number;
@@ -484,8 +487,13 @@ export function analyze(text: string): AnalyzeResult {
     byAxis[k].rate = words.length ? (byAxis[k].counted / words.length) * 100 : 0;
   }
 
+  // 1차 하네스 — 규칙이 낸 것이 원문과 어긋나지 않는지 본다.
+  // 여기 걸리는 것은 모형이 아니라 우리 사전·규칙의 버그다.
+  const g1 = guard1(findings, text);
+
   return {
-    findings,
+    findings: g1.kept,
+    ruleViolations: g1.tally,
     wordCount: words.length,
     charCount: text.length,
     sentences,
