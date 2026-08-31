@@ -165,8 +165,8 @@ export default function App() {
   const [copied, setCopied] = useState("");
   /** 수정본에서 고치기 전 말도 같이 보여 줄지 */
   const [showFrom, setShowFrom] = useState(false);
-  /** 3차에서 되돌린 자리 — 세는 데만 쓴다. 그 자리는 목록에서 아예 뺀다. */
-  const [verifyNotes, setVerifyNotes] = useState<Record<string, string>>({});
+  /** 3차가 바로잡은 자리 수 — 접힌 단계 표시에 숫자로만 쓴다 */
+  const [verifyCount, setVerifyCount] = useState(0);
   /** 세 단계를 다 돌 때까지 켜 둔다. 그동안 화면에는 아무것도 안 올린다. */
   const [busy, setBusy] = useState(false);
   /** 도는 동안 지금 몇 단계째인지 (0=안 돎, 1~3) */
@@ -443,7 +443,8 @@ export default function App() {
     let dec = defaultDecisions(r.findings);
     let ai: Finding[] = [];
     let summary = "";
-    let notes: Record<string, string> = {};
+    let reverted = new Set<string>();
+    let fixedByVerify = 0;
     let failed = "";
 
     if (withAi) {
@@ -492,7 +493,8 @@ export default function App() {
         try {
           const res = await verifyOn(src, all, dec);
           dec = res.dec;
-          notes = res.notes;
+          reverted = res.reverted;
+          fixedByVerify = res.fixed;
         } catch {
           /* 검수가 실패해도 앞 단계 결과는 살린다 */
         }
@@ -505,17 +507,14 @@ export default function App() {
     }
 
     /*
-     * 3차에서 걸린 것은 꺼 두지 않고 **아예 뺀다.**
-     *
-     * 꺼 두면 담당자 화면에 '왜 꺼져 있는지 읽고 판단할 것' 이 남는다. 그런데 그건
-     * 우리가 잘못 고치려다 스스로 걸러 낸 것이지 원고의 문제가 아니다. 숙제로 넘길
-     * 일이 아니라 없던 일로 하는 것이 맞다.
+     * 3차에서 잘못 고친 것은 이미 옳은 말로 갈아 끼웠다(verifyOn). 여기서 빼는 것은
+     * **애초에 손대지 말았어야 할 자리**뿐이다. 고칠 것이 없는 자리이니 지적으로 남길
+     * 이유가 없다. 어느 쪽이든 담당자 화면에는 설명이 붙지 않는다.
      *
      * 그러고 나면 목록에 남는 것은 전부 켜진 것이 된다. '모두 고치기' 를 누른 상태다.
      */
-    const dropped = new Set(Object.keys(notes));
-    const rule = r.findings.filter((f) => !dropped.has(f.key));
-    ai = ai.filter((f) => !dropped.has(f.key));
+    const rule = r.findings.filter((f) => !reverted.has(f.key));
+    ai = ai.filter((f) => !reverted.has(f.key));
     const kept: AnalyzeResult = { ...r, findings: rule };
 
     for (const f of [...rule, ...ai]) {
@@ -532,7 +531,7 @@ export default function App() {
     putDecisions(dec);
     setAiFindings(ai);
     setAiSummary(summary);
-    setVerifyNotes(notes);
+    setVerifyCount(fixedByVerify);
     setAiError(failed);
     setAiState(!withAi ? "idle" : failed ? "fail" : "done");
     setActive(null);
@@ -581,7 +580,7 @@ export default function App() {
     src: string,
     all: Finding[],
     dec: Record<string, Decision>,
-  ): Promise<{ dec: Record<string, Decision>; notes: Record<string, string> }> {
+  ): Promise<{ dec: Record<string, Decision>; reverted: Set<string>; fixed: number }> {
     // 켜진 것만 보면 안 된다. 켜기 전에 걸러 두어야 나쁜 것이 딸려 들어가지 않는다.
     const probe: Record<string, Decision> = { ...dec };
     for (const f of all) {
@@ -603,12 +602,27 @@ export default function App() {
       }
       at += part.text.length;
     }
-    if (edits.length === 0) return { dec, notes: {} };
+    if (edits.length === 0) return { dec, reverted: new Set<string>(), fixed: 0 };
 
-    const notes = await verifyEdits(cfg, edits.slice(0, 60));
+    /*
+     * 검수는 트집이 아니라 고침이다.
+     *
+     * 잘못 고친 자리마다 '그 자리에 들어갈 옳은 말' 이 돌아온다. 그것을 그대로 갈아 끼운다.
+     * 돌아온 말이 고치기 전과 같으면 애초에 손대지 말았어야 할 자리라는 뜻이니, 그 지적은
+     * 조용히 없앤다. 어느 쪽이든 담당자에게 설명을 떠넘기지 않는다.
+     */
+    const fixes = await verifyEdits(cfg, edits.slice(0, 60));
+    const before = new Map(edits.map((e) => [e.id, e.from]));
     const next = { ...dec };
-    for (const k of Object.keys(notes)) if (next[k]) next[k] = { ...next[k], on: false };
-    return { dec: next, notes };
+    const reverted = new Set<string>();
+    for (const [k, fix] of Object.entries(fixes)) {
+      if (fix === before.get(k)) {
+        reverted.add(k);
+        continue;
+      }
+      next[k] = { ...(next[k] ?? { on: false, pick: 0 }), custom: fix, on: true };
+    }
+    return { dec: next, reverted, fixed: Object.keys(fixes).length - reverted.size };
   }
 
   /** 키를 넣으러 갔다가 돌아오면 하려던 검토를 잇는다 */
@@ -1285,8 +1299,8 @@ export default function App() {
                       running: busy,
                       say:
                         aiState === "done"
-                          ? Object.keys(verifyNotes).length
-                            ? `${Object.keys(verifyNotes).length}건 되돌림`
+                          ? verifyCount
+                            ? `${verifyCount}건 바로잡음`
                             : "이상 없음"
                           : "안 돌림",
                       sub: "고친 자리를 다시 확인",

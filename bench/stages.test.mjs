@@ -46,11 +46,21 @@ check('숫자를 바꾼 답',
 check('멀쩡한 답은 통과',
   guard2({ quote:'배웠다', suggestion:'익혔다', sub:'군더더기' }, SRC, [], t2) !== null, true);
 
-console.log('\n3차 — 묻지 않은 것을 답하면 버리는지');
+console.log('\n3차 — 옳은 말을 받아 오는지, 어긴 답은 버리는지');
 const t3 = {};
-const out = guard3([{ id:'물어본것', why:'ㅇ' }, { id:'안물어본것', why:'ㅇ' }], new Set(['물어본것']), t3);
-check('묻지 않은 것을 버림', t3['묻지 않은 것을 답함'], 1);
-check('물어본 것만 남음',    Object.keys(out).join(','), '물어본것');
+const asked = new Map([['등를', '등를'], ['숫자', '1,000여 명이']]);
+const out = guard3(
+  [
+    { id: '등를',       fix: '등을' },
+    { id: '안물어본것',  fix: '아무말' },
+    { id: '숫자',       fix: '1,200여 명이' },
+  ],
+  asked,
+  t3,
+);
+check('묻지 않은 것을 버림',   t3['묻지 않은 것을 답함'], 1);
+check('숫자를 바꾼 답도 버림', t3['숫자가 바뀜'], 1);
+check('옳은 말만 남음',        JSON.stringify(out), '{"등를":"등을"}');
 
 console.log(bad ? '\n✗ 어긋난 곳이 있습니다' : '\n✓ 세 단계 모두 제 것을 막습니다');
 process.exit(bad ? 1 : 0);

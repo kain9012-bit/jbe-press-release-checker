@@ -553,8 +553,8 @@ export function tenseChanged(before: string, after: string): boolean {
 
 const VERIFY_SYSTEM = `당신은 대한민국 공공기관 보도자료를 최종 검수하는 국어 전문가다.
 
-앞 단계에서 원고의 여러 자리를 고쳤다. 그 목록을 준다. **각 고침이 그 문맥에서 옳은지만
-판정하라.** 새로 고칠 곳을 찾는 일이 아니다.
+앞 단계에서 원고의 여러 자리를 고쳤다. 그 목록을 준다. **잘못 고친 자리를 찾아, 그 자리에
+들어갈 옳은 말을 네가 직접 내라.** 새로 고칠 곳을 찾는 일이 아니다.
 
 무엇을 잘못이라고 하는가
 - 고친 뒤 문장이 말이 안 되는 것. 조사 받침이 어긋난 것(‘등를’, ‘공연로’).
@@ -570,8 +570,28 @@ const VERIFY_SYSTEM = `당신은 대한민국 공공기관 보도자료를 최�
 
 **옳은 것은 내지 마라. 잘못된 것만 낸다.** 잘못이 없으면 빈 목록을 낸다.
 
+잘못된 자리마다 fix 에 **그 자리에 실제로 들어갈 말**을 적는다. 지시문이나 설명이 아니라
+갈아 끼울 말 그대로다.
+- 고친 것이 틀렸고 다르게 고쳐야 하면 → 옳게 고친 말을 적는다.
+- 애초에 손대지 말았어야 하면 → ‘고치기 전’ 말을 그대로 적는다.
+
 출력은 다른 말 없이 JSON 객체 하나만 낸다.
-{"wrong":[{"id":"준 id 그대로","why":"무엇이 잘못인지 한 문장"}]}`;
+{"wrong":[{"id":"준 id 그대로","fix":"그 자리에 넣을 옳은 말"}]}`;
+
+const VERIFY_SCHEMA = {
+  type: 'object',
+  properties: {
+    wrong: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { id: { type: 'string' }, fix: { type: 'string' } },
+        required: ['id', 'fix'],
+      },
+    },
+  },
+  required: ['wrong'],
+};
 
 export interface EditToCheck {
   id: string;
@@ -584,11 +604,17 @@ export interface EditToCheck {
 }
 
 /**
- * 고쳐 놓은 자리들을 한 번에 다시 물어 잘못된 것을 골라낸다.
+ * 고쳐 놓은 자리들을 한 번에 다시 물어, 잘못 고친 것을 **옳게 고쳐 온다.**
  *
  * 모형은 부를 때마다 답이 달라서, 스스로 제대로 붙여 놓은 병기를 다음 번에 떼어 내기도 한다
  * (실제로 ‘높이기(UP)’ 를 ‘높이기’ 로 되돌린 적이 있다). 사람이 전부 읽어 볼 수는 없으니
- * 넣기 전에 기계가 한 번 더 본다. **고친 자리만 묻기 때문에 답을 그대로 되돌릴 수 있다.**
+ * 넣기 전에 기계가 한 번 더 본다.
+ *
+ * 전에는 잘못된 것을 끄고 화면에 이유를 적었다. 그러면 담당자가 읽을 것이 늘 뿐이고,
+ * 조사가 어긋난 자리는 여전히 어긋난 채 남는다. 지금은 **옳은 말을 받아서 갈아 끼운다.**
+ * 손대지 말았어야 할 자리면 ‘고치기 전’ 말이 돌아오고, 그 자리는 조용히 원래대로 둔다.
+ *
+ * 돌려주는 것: id → 그 자리에 넣을 옳은 말.
  */
 export async function verifyEdits(
   cfg: AiConfig,
@@ -604,9 +630,10 @@ export async function verifyEdits(
     cfg.provider === 'anthropic'
       ? await callAnthropic(cfg, user, VERIFY_SYSTEM)
       : cfg.provider === 'gemini' || cfg.provider === 'proxy'
-        ? await callGemini(cfg, user, VERIFY_SYSTEM)
+        ? await callGemini(cfg, user, VERIFY_SYSTEM, VERIFY_SCHEMA)
         : await callOpenAI(cfg, user, VERIFY_SYSTEM);
 
   const parsed = parseJson(raw);
-  return guard3(parsed.wrong ?? [], new Set(edits.map((e) => e.id)), {});
+  const from = new Map(edits.map((e) => [e.id, e.from]));
+  return guard3(parsed.wrong ?? [], from, {});
 }

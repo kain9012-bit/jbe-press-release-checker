@@ -171,30 +171,46 @@ export const STAGE3: StageSpec = {
   no: '3차',
   name: '재검토',
   takes: '1·2차가 고쳐 놓은 자리 목록 (고치기 전 · 고친 뒤 · 그 문장)',
-  does: '각 고침이 그 문맥에서 옳은지만 판정한다. 잘못된 것은 꺼 두고 카드에 이유를 적는다.',
+  does: '잘못 고친 자리를 찾아 그 자리에 들어갈 옳은 말을 낸다. 손대지 말았어야 할 자리면 고치기 전 말을 그대로 돌려준다.',
   never: [
     '새로 고칠 곳을 찾는 것 — 그건 2차가 이미 했다',
     '묻지 않은 자리를 답하는 것',
     '취향으로 트집 잡는 것 — 규범에 어긋난 것만 본다',
+    '무엇이 잘못이었는지 화면에 늘어놓는 것 — 담당자가 받을 것은 읽을거리가 아니라 고쳐진 글이다',
   ],
-  gives: '잘못된 고침의 id 와 이유',
+  gives: '잘못 고친 자리의 id 와 그 자리에 넣을 옳은 말',
 };
 
-/** 검수 답이 우리가 물어본 자리만 담고 있는지 본다. 새로 찾아 온 것은 받지 않는다. */
+/**
+ * 검수 답을 받는다.
+ *
+ * 물어본 자리만 받고, 돌려준 말이 규약(숫자·병기·자리표시)을 지키는지 본다. 어긴 답은
+ * 버린다 — 검수가 오히려 글을 망치게 둘 수는 없다.
+ *
+ * `asked` 는 id → 고치기 전 말. 규약 검사는 그 원문을 기준으로 한다.
+ */
 export function guard3(
-  raw: { id?: string; why?: string }[],
-  askedIds: Set<string>,
+  raw: { id?: string; fix?: string }[],
+  asked: Map<string, string>,
   tally: Tally,
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const w of raw ?? []) {
     const id = String(w.id ?? '').trim();
     if (!id) continue;
-    if (!askedIds.has(id)) {
+    const from = asked.get(id);
+    if (from === undefined) {
       count(tally, '묻지 않은 것을 답함');
       continue;
     }
-    out[id] = String(w.why ?? '').trim() || '검수에서 걸렸습니다.';
+    const fix = String(w.fix ?? '').trim();
+    if (!fix) continue;
+    const bad = checkReplacement(from, fix);
+    if (bad) {
+      count(tally, bad);
+      continue;
+    }
+    out[id] = fix;
   }
   return out;
 }
