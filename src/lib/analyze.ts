@@ -72,6 +72,8 @@ export interface Finding {
   severity: Severity;
   /** 어절 수 대비 오류율 산정에 넣을지 */
   counted: boolean;
+  /** AI 가 물어본 횟수만큼 다 짚은 것. 기본으로 켜 둘지 정하는 데만 쓴다. */
+  confident?: boolean;
 }
 
 /* ------------------------------------------------------------------ */

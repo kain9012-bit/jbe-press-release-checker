@@ -302,9 +302,11 @@ export async function reviewWithAi(
       text: v.quote,
       fixes: [v.fix || '문맥에 맞게 다시 쓰기'],
       why: v.why,
-      src: `AI 문맥 검토 ${answers.length}회 중 ${v.n}회 지목(사람이 최종 확인 필요)`,
+      src: 'AI 문맥 검토(사람이 최종 확인 필요)',
       severity: '검토',
       counted: false,
+      // 물어본 만큼 다 짚은 것만 기본으로 켠다. 한두 번만 나온 것은 사람이 보고 정한다.
+      confident: v.n >= answers.length,
     });
   }
   findings.sort((a2, b2) => a2.start - b2.start);

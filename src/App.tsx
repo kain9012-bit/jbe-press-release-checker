@@ -49,8 +49,6 @@ import {
 import {
   DEFAULT_MODEL,
   reviewWithAi,
-  ROUNDS,
-  MIN_VOTES,
   fillBlanks,
   tenseChanged,
   verifyEdits,
@@ -543,7 +541,8 @@ export default function App() {
       setAiSummary(r.summary);
       putDecisions((d) => {
         const next = { ...d };
-        for (const f of r.findings) next[f.key] = { on: false, pick: 0 };
+        // 세 번 다 짚은 것은 켜 두고, 갈린 것은 꺼 둔다. 사람이 읽을 것을 늘리지 않는다.
+        for (const f of r.findings) next[f.key] = { on: f.confident === true, pick: 0 };
         return next;
       });
       setAiState("done");
@@ -1060,10 +1059,7 @@ export default function App() {
                       done: aiState === "done",
                       running: aiState === "run" || filling,
                       say: aiState === "done" ? `${aiFindings.length}건` : "안 돌림",
-                      sub:
-                        aiState === "done"
-                          ? `${ROUNDS}회 물어 ${MIN_VOTES}회 이상 나온 것만`
-                          : "조사·호응·비문·군더더기",
+                      sub: "조사·호응·비문·군더더기",
                     },
                     {
                       n: "3차",
@@ -1225,23 +1221,6 @@ export default function App() {
                               >
                                 {f.severity}
                               </Badge>
-                              {/*
-                                표가 몇인지가 곧 그 지적이 얼마나 확실한지다.
-                                세 번 다 짚었으면 누가 봐도 오류이고, 한두 번만
-                                짚었으면 사람마다 갈리는 자리다. 답이 달라지는 것을
-                                숨기지 말고 그대로 등급으로 보여 준다.
-                              */}
-                              {(() => {
-                                const v = f.src.match(/(\d+)회 중 (\d+)회/);
-                                if (!v) return null;
-                                const [all, got] = [Number(v[1]), Number(v[2])];
-                                const sure = got >= all;
-                                return (
-                                  <Badge tone={sure ? "blue" : "slate"}>
-                                    {sure ? "확실" : "갈릴 수 있음"} {got}/{all}
-                                  </Badge>
-                                );
-                              })()}
                             </div>
                             <p className="mt-2 text-xs text-slate-500">
                               {f.sub}
