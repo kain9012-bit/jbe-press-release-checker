@@ -13,11 +13,24 @@ interface Props {
   activeTab: Tab;
   setActiveTab: (t: Tab) => void;
   onOpenSettings: () => void;
+  /**
+   * 설정 톱니바퀴를 보일지.
+   *
+   * 기관이 중계 서버를 두었으면 담당자가 고를 것이 하나도 없다 — 어느 회사에 물을지도,
+   * 어느 모형을 쓸지도 서버가 정한다. 열어 봐야 아무것도 없는 문은 안 만드는 것이 낫다.
+   */
+  showSettings?: boolean;
   /** 규칙이 어느 시점 자료 기준인지 */
   dataAsOf?: string;
 }
 
-export const Header: React.FC<Props> = ({ activeTab, setActiveTab, onOpenSettings, dataAsOf }) => (
+export const Header: React.FC<Props> = ({
+  activeTab,
+  setActiveTab,
+  onOpenSettings,
+  dataAsOf,
+  showSettings = true,
+}) => (
   <header className="bg-white sticky top-0 z-30 border-b border-slate-200">
     {/* 안내 띠 — 공식 평가가 아님을 먼저 밝힌다 (KRDS 마스트헤드 관례) */}
     <div className="bg-slate-50 text-slate-600 border-b border-slate-200">
@@ -76,6 +89,7 @@ export const Header: React.FC<Props> = ({ activeTab, setActiveTab, onOpenSetting
               })}
             </ul>
           </nav>
+          {showSettings && (
           <button
             type="button"
             onClick={onOpenSettings}
@@ -84,6 +98,7 @@ export const Header: React.FC<Props> = ({ activeTab, setActiveTab, onOpenSetting
           >
             <Settings className="w-5 h-5" aria-hidden="true" />
           </button>
+          )}
         </div>
       </div>
     </div>

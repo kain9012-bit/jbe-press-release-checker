@@ -733,6 +733,7 @@ export default function App() {
         setActiveTab={setTab}
         onOpenSettings={() => setShowCfg(true)}
         dataAsOf="2026. 8."
+        showSettings={!hasProxy()}
       />
 
       <main
@@ -915,6 +916,11 @@ export default function App() {
                   실을 수 없다. 규칙을 덜 만들어서가 아니라 구조적으로 안 되는 일이다.
                   그러니 화면이 그렇게 말해야 한다.
                 */}
+                {/*
+                  고를 것이 없으면 설명도 없다. 중계 서버가 있으면 단추 하나로 끝난다.
+                  담당자는 어느 회사의 어느 모형인지 알 필요가 없다.
+                */}
+                {!hasProxy() && (
                 <div className="space-y-2 text-sm">
                   <p className="rounded-md bg-white px-3 py-2 text-slate-700">
                     <b className="text-slate-900">AI까지 검토</b> — 용어·표기에 더해{" "}
@@ -926,6 +932,7 @@ export default function App() {
                     아직 키를 넣지 않았을 때 쓰는 반쪽 검사입니다.
                   </p>
                 </div>
+                )}
 
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <span className="text-sm text-slate-600 basis-full sm:basis-auto">
@@ -949,6 +956,7 @@ export default function App() {
                       <RotateCcw className="w-4 h-4" aria-hidden="true" />
                       초기화
                     </button>
+                    {!hasProxy() && (
                     <button
                       type="button"
                       onClick={() => void run(false)}
@@ -960,6 +968,7 @@ export default function App() {
                     >
                       <span>규칙으로만 검토</span>
                     </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => {
@@ -991,7 +1000,9 @@ export default function App() {
                             ? "빈자리 채우는 중"
                             : verifying
                               ? "검수하는 중"
-                              : "AI까지 검토"}
+                              : hasProxy()
+                                ? "검토하기"
+                                : "AI까지 검토"}
                       </span>
                       <ArrowRight className="w-4 h-4" aria-hidden="true" />
                     </button>
@@ -1677,9 +1688,9 @@ export default function App() {
                 합니다.
               </p>
               <p className="text-sm text-slate-300">
-                원고와 올린 파일은 브라우저 안에서만 처리합니다. AI 검토를 켜면
-                제목·부제·본문만 지정한 사업자에게 전송되고, 담당자 이름과
-                전화번호는 보내지 않습니다.
+                {hasProxy()
+                  ? "올린 파일은 브라우저 안에서만 읽습니다. 검토를 누르면 제목·부제·본문만 AI로 보내고, 담당자 이름과 전화번호는 보내지 않습니다."
+                  : "원고와 올린 파일은 브라우저 안에서만 처리합니다. AI 검토를 켜면 제목·부제·본문만 지정한 사업자에게 전송되고, 담당자 이름과 전화번호는 보내지 않습니다."}
               </p>
             </div>
             <div className="text-sm text-slate-300 md:text-right space-y-1">
