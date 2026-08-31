@@ -278,6 +278,55 @@ const squash = (s: string) => s.replace(/[ \t 　]+/g, ' ').trim();
 
 const HP_NS = 'http://www.hancom.co.kr/hwpml/2011/paragraph';
 
+/** 이 문단이 다른 문단 안에 들어 있는지 (표·글상자 안쪽인지) */
+function hasParaAncestor(el: Element): boolean {
+  for (let n = el.parentNode; n; n = n.parentNode) {
+    if (n.nodeType === 1 && isPara(n as Element)) return true;
+  }
+  return false;
+}
+
+const isPara = (el: Element) => el.localName === 'p' && el.namespaceURI === HP_NS;
+
+/**
+ * 문단 하나에서 글을 뽑는다. 안쪽 문단은 만나는 자리에서 먼저 낸다.
+ *
+ * 왜 한 문단 안에 다른 문단이 있는가
+ *   한글은 제목 상자를 표로 그린다. 그 표가 들어 있는 바깥 문단이 **자기 글도 같이**
+ *   들고 있는 서식이 있다. 실제로 2026-08-12 자료가 그랬다. 제목·부제 표 뒤에 리드문이
+ *   같은 문단의 다른 run 으로 붙어 있었다.
+ *
+ * 전에는 ‘안쪽 문단이 있으면 바깥 문단은 통째로 건너뛴다’ 였다. 그래서 그 리드문이
+ * 아무 말 없이 사라졌다. 원고 한 문단이 통째로 없어진 채 hwpx 가 만들어졌다.
+ * 이제는 바깥 문단의 제 글도 챙기고, 차례도 원문 그대로 지킨다.
+ */
+function collectPara(root: Element, out: string[]): void {
+  let own = '';
+  const flush = () => {
+    const t = squash(own);
+    if (t) out.push(t);
+    own = '';
+  };
+  const walk = (node: Element) => {
+    for (const child of Array.from(node.childNodes)) {
+      if (child.nodeType !== 1) continue;
+      const el = child as Element;
+      if (isPara(el)) {
+        flush();
+        collectPara(el, out);
+        continue;
+      }
+      if (el.localName === 't' && el.namespaceURI === HP_NS) {
+        own += el.textContent ?? '';
+        continue;
+      }
+      walk(el);
+    }
+  };
+  walk(root);
+  flush();
+}
+
 export function extractHwpxParagraphs(data: Uint8Array): string[] {
   const files = unzipSync(data);
   const names = Object.keys(files)
@@ -294,13 +343,10 @@ export function extractHwpxParagraphs(data: Uint8Array): string[] {
     if (doc.getElementsByTagName('parsererror').length) {
       throw new HwpError(`${n} 를 읽지 못했습니다.`);
     }
-    const ps = Array.from(doc.getElementsByTagNameNS(HP_NS, 'p'));
-    for (const p of ps) {
-      // 표·글상자를 품은 바깥 문단은 건너뛴다(안쪽 문단이 따로 잡힌다)
-      if (p.getElementsByTagNameNS(HP_NS, 'p').length > 0) continue;
-      const ts = Array.from(p.getElementsByTagNameNS(HP_NS, 't'));
-      const text = squash(ts.map((t) => t.textContent ?? '').join(''));
-      if (text) paragraphs.push(text);
+    // 바깥 문단(표를 품은 것)부터 훑되, 안쪽 문단은 나오는 자리에서 먼저 낸다
+    for (const p of Array.from(doc.getElementsByTagNameNS(HP_NS, 'p'))) {
+      if (hasParaAncestor(p)) continue;
+      collectPara(p, paragraphs);
     }
   }
   return paragraphs;
@@ -481,11 +527,13 @@ function roleOf(text: string): string {
 
 /** 담당 부서 표에서 부서명과 담당자를 뽑는다. */
 function parseContacts(paras: string[]) {
-  const out = { 부서: '', 사람: [] as { role: string; name: string; tel: string }[] };
+  // label 은 표에 실제로 적혀 있던 직위 글자 그대로다(‘전산행정담당’, ‘중 등 담 당’).
+  // role 은 그것을 갈래로 나눈 끝말이다. 내보낼 때는 label 을 그대로 다시 쓴다.
+  const out = { 부서: '', 사람: [] as { role: string; label: string; name: string; tel: string }[] };
   const i = paras.findIndex((p) => /담\s*당\s*부\s*서/.test(p));
   if (i < 0) return out;
 
-  let pending: { role: string; name: string; tel: string } | null = null;
+  let pending: { role: string; label: string; name: string; tel: string } | null = null;
   for (let k = i + 1; k < paras.length; k++) {
     const t = paras[k].trim();
     if (!t || /^\(\s*문\s*의\s*\)$/.test(t)) continue;
@@ -499,7 +547,7 @@ function parseContacts(paras: string[]) {
     }
     if (role) {
       if (pending) out.사람.push(pending);
-      pending = { role, name: '', tel: '' };
+      pending = { role, label: t, name: '', tel: '' };
       continue;
     }
     if (!pending) continue;
@@ -532,6 +580,8 @@ export interface PressRelease {
   과장: string;
   담당: string;
   담당자: string;
+  /** 문의 표에 적혀 있던 직위 글자 그대로 (과장·담당·담당자 칸 순서) */
+  직위: string[];
   서식: string;
 }
 
@@ -552,6 +602,7 @@ export function parsePressRelease(data: Uint8Array): PressRelease {
     과장: '',
     담당: '',
     담당자: '',
+    직위: [],
     서식: '',
   };
 
@@ -625,20 +676,29 @@ export function parsePressRelease(data: Uint8Array): PressRelease {
     [p.name, p.tel].filter(Boolean).join(' | ');
   // 서식의 세 칸(과장·담당·담당자)에 넣는다.
   // 과장급은 첫 칸으로, 나머지는 나온 순서대로 담당 → 담당자.
-  const rest: string[] = [];
+  /*
+   * 직위 글자도 함께 들고 간다.
+   *
+   * 전에는 이름과 전화번호만 옮기고 직위 칸은 양식의 ‘과장·담당·담당자’ 로 덮어썼다.
+   * 그래서 ‘전산행정담당’ 이 ‘담당’ 으로, ‘주무관’ 이 ‘담당자’ 로 바뀐 채 나갔다.
+   * 고쳐 달라고 한 적 없는 사실이 바뀐 것이다. 적혀 있던 그대로 다시 쓴다.
+   */
+  const rest: { line: string; label: string }[] = [];
   const 관리직 = ['과장', '국장', '관장', '센터장', '실장', '부장', '교육장'];
+  const 직위: string[] = ['', '', ''];
   for (const person of contacts.사람) {
     const line = join(person);
     if (!line) continue;
-    if (관리직.includes(person.role) && !r.과장) r.과장 = line;
-    else if (!r.담당) r.담당 = line;
-    else if (!r.담당자) r.담당자 = line;
-    else rest.push(line);
+    if (관리직.includes(person.role) && !r.과장) { r.과장 = line; 직위[0] = person.label; }
+    else if (!r.담당) { r.담당 = line; 직위[1] = person.label; }
+    else if (!r.담당자) { r.담당자 = line; 직위[2] = person.label; }
+    else rest.push({ line, label: person.label });
   }
-  for (const line of rest) {
-    if (!r.담당) r.담당 = line;
-    else if (!r.담당자) r.담당자 = line;
+  for (const x of rest) {
+    if (!r.담당) { r.담당 = x.line; 직위[1] = x.label; }
+    else if (!r.담당자) { r.담당자 = x.line; 직위[2] = x.label; }
   }
+  r.직위 = 직위;
 
   r.서식 = fieldValue(paras, '배포일') ? '2026-07 이후' : '이전 서식';
   r.ok = Boolean(r.제목 || r.본문.length);

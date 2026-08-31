@@ -48,6 +48,8 @@ export interface ReleaseMeta {
   과장: string;
   담당: string;
   담당자: string;
+  /** 원본 문의 표에 적혀 있던 직위 글자 (과장·담당·담당자 칸 순서). 비면 양식 이름을 쓴다. */
+  직위?: string[];
 }
 
 export const EMPTY_META: ReleaseMeta = {
@@ -61,6 +63,7 @@ export const EMPTY_META: ReleaseMeta = {
   과장: '',
   담당: '',
   담당자: '',
+  직위: [],
 };
 
 /* ------------------------------------------------------------------ */
@@ -159,8 +162,11 @@ function fillSection(xml: string, meta: ReleaseMeta, body: string[]): string {
     xml = replaceT(xml, namePh, name);
     // 전화번호 칸 세 개를 순서대로 하나씩 채운다
     xml = xml.replace(`<hp:t>${PH_TEL}</hp:t>`, `<hp:t>${xmlEscape(tel)}</hp:t>`);
+    // 원본에 적혀 있던 직위가 있으면 그것을 쓴다. ‘전산행정담당’ 을 ‘담당’ 으로
+    // 덮어쓰면 고쳐 달라고 한 적 없는 사실이 바뀐다.
+    const shown = meta.직위?.[i]?.trim() || label;
     // 사람이 없으면 직위 칸도 비운다
-    xml = replaceT(xml, ph, name || tel ? label : '');
+    xml = replaceT(xml, ph, name || tel ? shown : '');
   });
 
   xml = replaceT(xml, PH_TITLE, meta.제목);

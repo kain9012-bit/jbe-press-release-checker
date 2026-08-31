@@ -12,7 +12,7 @@
  */
 
 import { STEP_IDS, checkReplacement, type Violation } from './procedure';
-import type { Finding } from './analyze';
+import { insideByunggi, type Finding } from './analyze';
 
 export interface StageSpec {
   no: '1차' | '2차' | '3차';
@@ -145,12 +145,19 @@ export function guard2(
     }
   }
 
-  // 이미 차지한 자리와 겹치지 않는 첫 자리를 찾는다
+  /*
+   * 이미 차지한 자리와 겹치지 않는 첫 자리를 찾는다.
+   *
+   * ‘한글(ABC)’ 병기 속 괄호 안은 건너뛴다. 규칙은 그 자리를 일부러 놔두는데, 그러면
+   * 아무도 차지하지 않은 자리라 모형이 ‘AI’ 를 물었을 때 하필 ‘인공지능(AI)’ 안쪽이
+   * 잡힌다. 그래서 ‘인공지능(인공지능(AI))’ 이 나갔다.
+   */
   let start = -1;
   for (let from = 0; ; ) {
     const i = source.indexOf(quote, from);
     if (i < 0) break;
-    if (!taken.some(([a, b]) => i < b && a < i + quote.length)) {
+    const free = !taken.some(([a, b]) => i < b && a < i + quote.length);
+    if (free && !insideByunggi(source, i, i + quote.length)) {
       start = i;
       break;
     }

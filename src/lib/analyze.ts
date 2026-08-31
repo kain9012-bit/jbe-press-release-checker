@@ -86,6 +86,19 @@ const JOSA_HEAD = new Set(
   '은는이가을를에의로과와도만부까처보밖조마라든나야여랑서한께으랍'.split(''),
 );
 
+/**
+ * 이 자리가 이미 ‘한글(ABC)’ 병기 안의 괄호 속인지.
+ *
+ * 규칙도 AI 도 이 자리는 건드리면 안 된다. 실제로 ‘인공지능(AI) 기술’ 의 괄호 속 AI 를
+ * 또 잡아서 ‘인공지능(인공지능(AI)) 기술’ 이 나간 적이 있다.
+ */
+export function insideByunggi(text: string, start: number, end: number): boolean {
+  const open = text[start - 1];
+  const close = text[end];
+  const beforeOpen = text[start - 2] ?? '';
+  return open === '(' && close === ')' && (isHangul(beforeOpen) || /[)\]]/.test(beforeOpen));
+}
+
 function boundaryOk(text: string, start: number, end: number) {
   const before = text[start - 1] ?? '';
   const after = text[end] ?? '';
@@ -154,10 +167,7 @@ export function analyze(text: string): AnalyzeResult {
       const s = m.index;
       const e = s + m[0].length;
       // 한글(ABC) 형태의 병기는 허용한다.
-      const open = text[s - 1];
-      const close = text[e];
-      const beforeOpen = text[s - 2];
-      if (open === '(' && close === ')' && (isHangul(beforeOpen) || /[)\]]/.test(beforeOpen ?? ''))) continue;
+      if (insideByunggi(text, s, e)) continue;
       if (/^https?$|^www$/i.test(m[0])) continue;
       // 널리 쓰는 약어는 병기 형태가 정해져 있으니 바로 고칠 수 있게 준다
       const known = ROMAN_KOREAN[m[0].toUpperCase().replace(/[^A-Z0-9]/g, '')];
@@ -435,10 +445,23 @@ export function analyze(text: string): AnalyzeResult {
     }
   }
 
+  /*
+   * 이미 병기가 된 괄호 속은 어느 규칙도 건드리지 않는다.
+   *
+   * 로마자 규칙만 이 자리를 비켜 갔더니 사전 규칙이 그 틈으로 들어왔다. 실제로
+   * ‘인공지능(AI) 기술’ 이 ‘인공지능(① 인공 지능 ② 조류 독감) 기술’ 로 나갔다.
+   * 규칙마다 따로 막을 일이 아니라 한곳에서 막는다.
+   *
+   * 괄호 안을 **통째로** 덮는 지적만 걸린다. ‘부재(출장·복무 등)’ 안의 ‘출장’ 처럼
+   * 괄호의 일부만 짚는 것은 그대로 둔다.
+   */
+  const inParens = raw.filter((f) => insideByunggi(text, f.start, f.end));
+  const clean = inParens.length ? raw.filter((f) => !inParens.includes(f)) : raw;
+
   /* --- 겹치는 지적 정리 : 같은 자리는 긴 것 하나만 --- */
-  raw.sort((a, b) => a.start - b.start || b.end - b.start - (a.end - a.start));
+  clean.sort((a, b) => a.start - b.start || b.end - b.start - (a.end - a.start));
   const findings: Finding[] = [];
-  for (const f of raw) {
+  for (const f of clean) {
     const clash = findings.find((g) => f.start < g.end && g.start < f.end && g.axis === f.axis);
     if (clash) continue;
     findings.push(f);
@@ -583,8 +606,77 @@ export function agreeJosa(prev: string, replacement: string): string {
   return replacement;
 }
 
-/** ‘인공지능(AI)’ 처럼 한글 뒤에 외국 글자를 괄호로 단 병기 형태 */
-const BYUNGGI = /^[가-힣·\s]+\([A-Za-z0-9&.\-+]+\)$/;
+/**
+ * ‘인공지능(AI)’ 처럼 한글 뒤에 외국 글자를 괄호로 단 병기 형태.
+ *
+ * 조사가 붙어 오는 것도 병기로 본다. ‘인공지능(AI)이’ 를 괄호가 들었다는 이유로 막으면
+ * 제목의 ‘AI가’ 가 아예 안 고쳐진다(실제로 그렇게 그대로 나갔다).
+ */
+const BYUNGGI = /^[가-힣·\s]+\([A-Za-z0-9&.\-+]+\)(으로|이나|이란|이라|로|을|를|이|가|은|는|과|와)?$/;
+
+/** 갈아 끼울 말 끝에 붙어 올 수 있는 조사 — 긴 것부터 본다 */
+const TAIL_JOSA = ['으로', '이나', '이란', '이라', '로', '을', '를', '이', '가', '은', '는', '과', '와'];
+
+const endsWithJosa = (s: string) => TAIL_JOSA.find((j) => s.endsWith(j)) ?? null;
+
+const startsWithJosa = (s: string) => {
+  const j = TAIL_JOSA.find((x) => s.startsWith(x));
+  if (!j) return null;
+  // 조사 뒤에는 공백이나 문장 부호가 와야 한다. ‘은행’ 의 ‘은’ 을 조사로 보면 안 된다.
+  const after = s[j.length];
+  return after === undefined || /[\s,.·”’)]/.test(after) ? j : null;
+};
+
+/** 조사를 고를 때 읽는 마지막 글자. 괄호 병기는 읽지 않는다(‘인공지능(AI)’ → ‘능’). */
+function readingTail(word: string): string {
+  const w = word.replace(/\([^)]*\)\s*$/, '').trim();
+  return [...w].pop() ?? '';
+}
+
+/** 앞말이 `word` 로 바뀌었을 때 조사 `josa` 가 되어야 할 꼴. 판단할 수 없으면 null. */
+function josaAfter(word: string, josa: string): string | null {
+  const ch = readingTail(word);
+  const batchim = hasBatchim(ch);
+  if (batchim === null) return null;
+  for (const [withB, withoutB] of JOSA_PAIRS) {
+    if (josa !== withB && josa !== withoutB) continue;
+    if (withB === '으로') return batchim && !isRieul(ch) ? '으로' : '로';
+    return batchim ? withB : withoutB;
+  }
+  return null;
+}
+
+/**
+ * 갈아 끼운 뒤 **뒤에 남는 조사**를 어떻게 할지 정한다.
+ *
+ * 낱말을 바꾸면 그 뒤의 조사도 따라 바뀌어야 하는데, 지적한 자리는 낱말까지다. 그래서
+ * 실제로 이런 것이 나갔다.
+ *   ‘AI가 척척’            → ‘인공지능(AI)이가 척척’ / ‘인공지능(AI)가 척척’
+ *   ‘시스템을 전국 최초로’  → ‘체계를을 전국 최초로’
+ *   ‘이 시스템은 그동안’    → ‘이 체계는은 그동안’ / ‘이 체계은 그동안’
+ *
+ * 두 가지가 겹쳐 있다. 고칠 말이 조사를 달고 오면 겹조사가 되고, 안 달고 오면 앞말에
+ * 안 맞는 조사가 남는다. 어느 쪽이든 **원문의 조사를 함께 먹고** 맞는 꼴로 다시 쓴다.
+ *
+ * skip — 원문에서 더 먹을 글자 수, add — 그 자리에 대신 쓸 조사.
+ */
+export function trailingJosaFix(
+  source: string,
+  end: number,
+  span: string,
+  rep: string,
+): { skip: number; add: string } {
+  const none = { skip: 0, add: '' };
+  const josa = startsWithJosa(source.slice(end));
+  if (!josa) return none;
+  // 지적한 자리가 이미 조사로 끝나면 원문의 조사는 그 안에 있다. 뒤엣것은 남의 것이다.
+  if (endsWithJosa(span)) return none;
+  // 고칠 말이 조사를 달고 왔다 — 원문에 남은 조사는 먹어 없앤다
+  if (endsWithJosa(rep)) return { skip: josa.length, add: '' };
+  const right = josaAfter(rep, josa);
+  if (right === null || right === josa) return none;
+  return { skip: josa.length, add: right };
+}
 
 export function isApplicable(fix: string) {
   const t = pickText(fix);
@@ -644,8 +736,12 @@ export function buildRevisedParts(
     const rep = replacementFor(f, decisions[f.key], text);
     if (rep === null) continue;
     if (f.start > cursor) parts.push({ text: text.slice(cursor, f.start) });
-    parts.push({ text: rep, from: text.slice(f.start, f.end), axis: f.axis, key: f.key });
-    cursor = f.end;
+    // 낱말이 바뀌면 뒤에 남는 조사도 따라 고친다(겹조사·불일치 막기)
+    const span = text.slice(f.start, f.end);
+    const { skip, add } = trailingJosaFix(text, f.end, span, rep);
+    const end = f.end + skip;
+    parts.push({ text: rep + add, from: text.slice(f.start, end), axis: f.axis, key: f.key });
+    cursor = end;
   }
   if (cursor < text.length) parts.push({ text: text.slice(cursor) });
   return parts;
