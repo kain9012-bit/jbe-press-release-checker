@@ -1006,6 +1006,196 @@ export default function App() {
         {/* ------------------ 결과 (입력 아래에 이어 붙는다) ------------------ */}
         {tab === "check" && result && (
           <div ref={resultRef} className="space-y-8 pb-12 scroll-mt-28">
+            {/*
+              담당자는 넣고 받으면 끝이어야 한다. 고친 글과 내려받기를 맨 위에 두고,
+              나머지(무엇을 고쳤는지·점검표)는 접어 둔다. 지우지는 않는다 — 볼 사람은
+              펴서 보면 된다. 화면에 늘어놓고 공부시키지 않는 것이 핵심이다.
+            */}
+            <section className="space-y-3">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <SectionTitle
+                  count={fixedCount}
+                  unit="곳"
+                  desc="자동으로 고친 자리는 초록으로 칠했습니다"
+                >
+                  자동 수정본
+                </SectionTitle>
+                <div className="flex flex-wrap gap-2">
+                  {/*
+                    밖에 두는 것은 내려받기 하나다. 나머지(모두 고치기·되돌리기·
+                    원래 말 보기·복사·AI로 채우기)는 손볼 사람만 쓰는 것이라
+                    ‘무엇을 고쳤는지 보기’ 안으로 넣었다.
+                  */}
+                  <button
+                    type="button"
+                    onClick={downloadHwpx}
+                    className="h-12 px-6 bg-blue-600 hover:bg-blue-700 text-white font-bold
+                               text-lg rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    <FileDown className="w-5 h-5" aria-hidden="true" />
+                    한글 파일 내려받기
+                  </button>
+                </div>
+              </div>
+
+              {exportError && (
+                <Notice tone="red" title="hwpx를 만들지 못했습니다">
+                  {exportError}
+                </Notice>
+              )}
+              {!revisedDoc && (
+                <Notice
+                  tone="amber"
+                  title="제목·부제 위치를 자동으로 되돌리지 못했습니다"
+                >
+                  수정본의 문단 수가 원문과 다릅니다. 아래 ‘hwpx 머리말 정보’에서
+                  확인한 뒤 내려받으세요.
+                </Notice>
+              )}
+
+              <div className={`${CARD} p-5`}>
+                {fillNote && (
+                  <p className="mb-3 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-slate-800">
+                    {fillNote}
+                  </p>
+                )}
+
+                {fixedCount === 0 && (
+                  <p className="mb-3 text-sm text-slate-600">
+                    아직 고친 곳이 없습니다. 위 지적에서 하나씩 켜거나 <b>모두 고치기</b>를 누르세요.
+                  </p>
+                )}
+
+                {/* 갈아 끼운 자리를 칠해서 어디가 바뀌었는지 바로 보이게 한다 */}
+                <div className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-4 font-sans text-base leading-[1.9]">
+                  {revisedParts.map((part, i) =>
+                    part.from === undefined ? (
+                      <span key={i}>{part.text}</span>
+                    ) : (
+                      <span key={i} title={`원래: ${part.from}`}>
+                        {showFrom && (
+                          <span className="rounded bg-red-50 px-1 text-red-700 line-through decoration-red-300">
+                            {part.from}
+                          </span>
+                        )}
+                        {showFrom && ' '}
+                        <span className="rounded bg-green-50 px-1 font-bold text-green-700">
+                          {part.text}
+                        </span>
+                      </span>
+                    ),
+                  )}
+                </div>
+
+                <details className="mt-4 rounded-md border border-slate-200 p-4">
+                  <summary className="cursor-pointer font-bold text-slate-900">
+                    hwpx 머리말 정보{" "}
+                    <span className="text-sm font-normal text-slate-500">
+                      배포일·부서·담당자 — 내려받기 전에 채워 주세요
+                    </span>
+                  </summary>
+                  <div className="mt-4 space-y-3">
+                    <MetaForm value={meta} onChange={setMeta} lockTitle />
+                    <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600 space-y-0.5">
+                      <p>
+                        제목{" "}
+                        <b className="text-slate-900">
+                          {revisedDoc?.meta.제목 || meta.제목 || "(없음)"}
+                        </b>
+                      </p>
+                      {(revisedDoc?.meta.부제 ?? meta.부제).filter(Boolean)
+                        .length > 0 && (
+                        <p>
+                          부제{" "}
+                          {(revisedDoc?.meta.부제 ?? meta.부제)
+                            .filter(Boolean)
+                            .join(" / ")}
+                        </p>
+                      )}
+                      <p>
+                        본문{" "}
+                        {
+                          (revisedDoc?.body ?? body).filter((b) => b.trim())
+                            .length
+                        }
+                        문단 · 파일명{" "}
+                        <span className="font-mono">
+                          {defaultFileName({
+                            ...meta,
+                            제목: revisedDoc?.meta.제목 || meta.제목,
+                          })}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            </section>
+
+            <details className="group">
+              <summary className="cursor-pointer list-none rounded-lg border border-slate-200 bg-white px-5 py-3 font-bold text-slate-800 hover:border-blue-600">
+                <span className="mr-2 text-blue-700 group-open:hidden">＋</span>
+                <span className="mr-2 hidden text-blue-700 group-open:inline">－</span>
+                무엇을 고쳤는지 보기
+                <span className="ml-2 text-sm font-normal text-slate-500">
+                  지적 {findings.length}건
+                </span>
+              </summary>
+              <div className="mt-4 space-y-8">
+                {/* 손볼 사람만 쓰는 단추들 */}
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => setAll(true)} className={BTN_GHOST}>
+                    <Wand2 className="w-4 h-4" aria-hidden="true" />
+                    모두 고치기
+                  </button>
+                  <button type="button" onClick={() => setAll(false)} className={BTN_GHOST}>
+                    <Undo2 className="w-4 h-4" aria-hidden="true" />
+                    모두 되돌리기
+                  </button>
+                  {blanks.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={fillWithAi}
+                      disabled={filling}
+                      className={BTN_GHOST}
+                    >
+                      {filling ? (
+                        <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Sparkles className="w-4 h-4" aria-hidden="true" />
+                      )}
+                      못 고친 {blanks.length}곳 AI로 채우기
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowFrom((v) => !v)}
+                    aria-pressed={showFrom}
+                    className={showFrom ? BTN_PRIMARY : BTN_GHOST}
+                  >
+                    {showFrom ? (
+                      <Eye className="w-4 h-4" aria-hidden="true" />
+                    ) : (
+                      <EyeOff className="w-4 h-4" aria-hidden="true" />
+                    )}
+                    원래 말 같이 보기
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => copy(revised, "수정본")}
+                    className={BTN_GHOST}
+                  >
+                    {copied === "수정본" ? (
+                      <Check
+                        className="w-4 h-4 text-green-600"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <Copy className="w-4 h-4" aria-hidden="true" />
+                    )}
+                    복사
+                  </button>
+                </div>
             {/* 요약 */}
             <section className="space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-3">
@@ -1133,7 +1323,6 @@ export default function App() {
                 </Notice>
               )}
             </section>
-
             {/* 원문 + 지적 */}
             <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]">
               <div className="space-y-3">
@@ -1347,173 +1536,19 @@ export default function App() {
               </div>
             </section>
 
-            {/* 수정본 + 내보내기 */}
-            <section className="space-y-3">
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <SectionTitle
-                  count={fixedCount}
-                  unit="곳"
-                  desc="자동으로 고친 자리는 초록으로 칠했습니다"
-                >
-                  자동 수정본
-                </SectionTitle>
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => setAll(true)} className={BTN_GHOST}>
-                    <Wand2 className="w-4 h-4" aria-hidden="true" />
-                    모두 고치기
-                  </button>
-                  <button type="button" onClick={() => setAll(false)} className={BTN_GHOST}>
-                    <Undo2 className="w-4 h-4" aria-hidden="true" />
-                    모두 되돌리기
-                  </button>
-                  {blanks.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={fillWithAi}
-                      disabled={filling}
-                      className={BTN_GHOST}
-                    >
-                      {filling ? (
-                        <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-                      ) : (
-                        <Sparkles className="w-4 h-4" aria-hidden="true" />
-                      )}
-                      못 고친 {blanks.length}곳 AI로 채우기
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setShowFrom((v) => !v)}
-                    aria-pressed={showFrom}
-                    className={showFrom ? BTN_PRIMARY : BTN_GHOST}
-                  >
-                    {showFrom ? (
-                      <Eye className="w-4 h-4" aria-hidden="true" />
-                    ) : (
-                      <EyeOff className="w-4 h-4" aria-hidden="true" />
-                    )}
-                    원래 말 같이 보기
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => copy(revised, "수정본")}
-                    className={BTN_GHOST}
-                  >
-                    {copied === "수정본" ? (
-                      <Check
-                        className="w-4 h-4 text-green-600"
-                        aria-hidden="true"
-                      />
-                    ) : (
-                      <Copy className="w-4 h-4" aria-hidden="true" />
-                    )}
-                    복사
-                  </button>
-                  <button
-                    type="button"
-                    onClick={downloadHwpx}
-                    className={BTN_PRIMARY}
-                  >
-                    <FileDown className="w-4 h-4" aria-hidden="true" />
-                    hwpx로 내려받기
-                  </button>
-                </div>
               </div>
+            </details>
 
-              {exportError && (
-                <Notice tone="red" title="hwpx를 만들지 못했습니다">
-                  {exportError}
-                </Notice>
-              )}
-              {!revisedDoc && (
-                <Notice
-                  tone="amber"
-                  title="제목·부제 위치를 자동으로 되돌리지 못했습니다"
-                >
-                  수정본의 문단 수가 원문과 다릅니다. 아래 ‘hwpx 머리말 정보’에서
-                  확인한 뒤 내려받으세요.
-                </Notice>
-              )}
-
-              <div className={`${CARD} p-5`}>
-                {fillNote && (
-                  <p className="mb-3 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-slate-800">
-                    {fillNote}
-                  </p>
-                )}
-
-                {fixedCount === 0 && (
-                  <p className="mb-3 text-sm text-slate-600">
-                    아직 고친 곳이 없습니다. 위 지적에서 하나씩 켜거나 <b>모두 고치기</b>를 누르세요.
-                  </p>
-                )}
-
-                {/* 갈아 끼운 자리를 칠해서 어디가 바뀌었는지 바로 보이게 한다 */}
-                <div className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-4 font-sans text-base leading-[1.9]">
-                  {revisedParts.map((part, i) =>
-                    part.from === undefined ? (
-                      <span key={i}>{part.text}</span>
-                    ) : (
-                      <span key={i} title={`원래: ${part.from}`}>
-                        {showFrom && (
-                          <span className="rounded bg-red-50 px-1 text-red-700 line-through decoration-red-300">
-                            {part.from}
-                          </span>
-                        )}
-                        {showFrom && ' '}
-                        <span className="rounded bg-green-50 px-1 font-bold text-green-700">
-                          {part.text}
-                        </span>
-                      </span>
-                    ),
-                  )}
-                </div>
-
-                <details className="mt-4 rounded-md border border-slate-200 p-4">
-                  <summary className="cursor-pointer font-bold text-slate-900">
-                    hwpx 머리말 정보{" "}
-                    <span className="text-sm font-normal text-slate-500">
-                      배포일·부서·담당자 — 내려받기 전에 채워 주세요
-                    </span>
-                  </summary>
-                  <div className="mt-4 space-y-3">
-                    <MetaForm value={meta} onChange={setMeta} lockTitle />
-                    <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600 space-y-0.5">
-                      <p>
-                        제목{" "}
-                        <b className="text-slate-900">
-                          {revisedDoc?.meta.제목 || meta.제목 || "(없음)"}
-                        </b>
-                      </p>
-                      {(revisedDoc?.meta.부제 ?? meta.부제).filter(Boolean)
-                        .length > 0 && (
-                        <p>
-                          부제{" "}
-                          {(revisedDoc?.meta.부제 ?? meta.부제)
-                            .filter(Boolean)
-                            .join(" / ")}
-                        </p>
-                      )}
-                      <p>
-                        본문{" "}
-                        {
-                          (revisedDoc?.body ?? body).filter((b) => b.trim())
-                            .length
-                        }
-                        문단 · 파일명{" "}
-                        <span className="font-mono">
-                          {defaultFileName({
-                            ...meta,
-                            제목: revisedDoc?.meta.제목 || meta.제목,
-                          })}
-                        </span>
-                      </p>
-                    </div>
-                  </div>
-                </details>
-              </div>
-            </section>
-
+            <details className="group">
+              <summary className="cursor-pointer list-none rounded-lg border border-slate-200 bg-white px-5 py-3 font-bold text-slate-800 hover:border-blue-600">
+                <span className="mr-2 text-blue-700 group-open:hidden">＋</span>
+                <span className="mr-2 hidden text-blue-700 group-open:inline">－</span>
+                점검표
+                <span className="ml-2 text-sm font-normal text-slate-500">
+                  공공언어의 요건 15항목
+                </span>
+              </summary>
+              <div className="mt-4 space-y-8">
             {/* 점검표 */}
             <section className="space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-3">
@@ -1621,6 +1656,8 @@ export default function App() {
                 </ul>
               </div>
             </section>
+              </div>
+            </details>
           </div>
         )}
       </main>
