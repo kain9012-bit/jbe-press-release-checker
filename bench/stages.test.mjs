@@ -46,7 +46,7 @@ check('숫자를 바꾼 답',
 check('멀쩡한 답은 통과',
   guard2({ quote:'배웠다', suggestion:'익혔다', sub:'군더더기' }, SRC, [], t2) !== null, true);
 
-console.log('\n3차 — 옳은 말을 받아 오는지, 어긴 답은 버리는지');
+console.log('\n3차 — 문맥 판정을 받아 오는지, 어긴 답은 버리는지');
 const t3 = {};
 const asked = new Map([['등를', '등를'], ['숫자', '1,000여 명이'], ['표어', 'UP']]);
 const out = guard3(
@@ -54,15 +54,14 @@ const out = guard3(
     { id: '등를',       fix: '등을' },
     { id: '안물어본것',  fix: '아무말' },
     { id: '숫자',       fix: '1,200여 명이' },
-    { id: '표어',       fix: 'UP' },   // 고치기 전 그대로 = 되돌리기
+    { id: '표어',       fix: 'UP' },   // 고치기 전 그대로 = '그대로 두라'
   ],
   asked,
   t3,
 );
 check('묻지 않은 것을 버림',   t3['묻지 않은 것을 답함'], 1);
 check('숫자를 바꾼 답도 버림', t3['숫자가 바뀜'], 1);
-check('되돌리려는 답을 버림',  t3['고치기 전으로 되돌리려 함'], 1);
-check('옳은 말만 남음',        JSON.stringify(out), '{"등를":"등을"}');
+check('그대로 두라는 답은 받는다', JSON.stringify(out), '{"등를":"등을","표어":"UP"}');
 
 console.log(bad ? '\n✗ 어긋난 곳이 있습니다' : '\n✓ 세 단계 모두 제 것을 막습니다');
 process.exit(bad ? 1 : 0);

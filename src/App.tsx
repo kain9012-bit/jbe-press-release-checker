@@ -448,6 +448,7 @@ export default function App() {
     let ai: Finding[] = [];
     let summary = "";
     let fixedByVerify = 0;
+    let held = new Set<string>();
     let failed = "";
 
     if (withAi) {
@@ -497,6 +498,7 @@ export default function App() {
           const res = await verifyOn(src, all, dec);
           dec = res.dec;
           fixedByVerify = res.fixed;
+          held = res.held;
         } catch {
           /* 검수가 실패해도 앞 단계 결과는 살린다 */
         }
@@ -518,6 +520,8 @@ export default function App() {
      * 고칠 말이 있는 것은 전부 켠다. '모두 고치기' 를 누른 상태로 나온다.
      */
     for (const f of [...r.findings, ...ai]) {
+      // 3차가 '그대로 두라' 고 한 자리는 켜지 않는다. 목록에는 그대로 남는다.
+      if (held.has(f.key)) continue;
       const d = dec[f.key] ?? { on: false, pick: 0 };
       if (replacementFor(f, d, src) !== null) dec[f.key] = { ...d, on: true };
     }
@@ -580,7 +584,7 @@ export default function App() {
     src: string,
     all: Finding[],
     dec: Record<string, Decision>,
-  ): Promise<{ dec: Record<string, Decision>; fixed: number }> {
+  ): Promise<{ dec: Record<string, Decision>; fixed: number; held: Set<string> }> {
     // 켜진 것만 보면 안 된다. 켜기 전에 걸러 두어야 나쁜 것이 딸려 들어가지 않는다.
     const probe: Record<string, Decision> = { ...dec };
     for (const f of all) {
@@ -602,21 +606,34 @@ export default function App() {
       }
       at += part.text.length;
     }
-    if (edits.length === 0) return { dec, fixed: 0 };
+    if (edits.length === 0) return { dec, fixed: 0, held: new Set<string>() };
 
     /*
-     * 검수는 트집이 아니라 고침이다.
+     * 3차가 문맥을 읽고 자리마다 판정해 온다.
      *
-     * 잘못 고친 자리마다 '그 자리에 들어갈 더 나은 말' 이 돌아온다. 그것을 갈아 끼운다.
-     * 여기서 지적이 없어지는 일은 없다. 검수는 앞 단계가 고른 말을 더 나은 말로 바꿀 뿐,
-     * 규범에 걸린 자리를 없던 일로 만들 권한은 없다(guard3 가 되돌리기를 버린다).
+     *   다른 말이 왔다  → 그 말로 갈아 끼운다.
+     *   같은 말이 왔다  → '그대로 두라' 는 뜻이다. 그 자리만 끈다.
+     *
+     * 규칙은 낱말 사전이라 'K' 를 '케이(K)' 로 바꾸라고만 할 뿐, 그것이 'K뚝배기' 라는
+     * 시스템 이름의 첫 글자인지는 모른다. 그 판단은 사전에 손으로 적어 둘 수 있는 것이
+     * 아니라 문맥을 읽어야 아는 것이고, 그래서 여기서 한다.
+     *
+     * **끄는 것과 없애는 것은 다르다.** 지적은 목록에 그대로 남는다. 전에 이 둘을
+     * 섞어서 부제의 '꿈 UP! 미래 UP!' 이 통째로 사라졌다.
      */
     const fixes = await verifyEdits(cfg, edits.slice(0, 60));
+    const before = new Map(edits.map((e) => [e.id, e.from]));
     const next = { ...dec };
+    const held = new Set<string>();
     for (const [k, fix] of Object.entries(fixes)) {
+      if (fix === before.get(k)) {
+        held.add(k);
+        next[k] = { ...(next[k] ?? { pick: 0 }), on: false };
+        continue;
+      }
       next[k] = { ...(next[k] ?? { on: false, pick: 0 }), custom: fix, on: true };
     }
-    return { dec: next, fixed: Object.keys(fixes).length };
+    return { dec: next, fixed: Object.keys(fixes).length - held.size, held };
   }
 
   /** 키를 넣으러 갔다가 돌아오면 하려던 검토를 잇는다 */
