@@ -170,17 +170,22 @@ export default function App() {
   const [verifyNotes, setVerifyNotes] = useState<Record<string, string>>({});
   /** 세 단계를 다 돌 때까지 켜 둔다. 그동안 화면에는 아무것도 안 올린다. */
   const [busy, setBusy] = useState(false);
+  /** 도는 동안 지금 몇 단계째인지 (0=안 돎, 1~3) */
+  const [phase, setPhase] = useState(0);
   /** 키를 넣으러 설정 창에 갔다가 돌아오면 검토를 이어야 하는지 */
   const resume = useRef(false);
   const [exportError, setExportError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
+  const busyRef = useRef<HTMLElement>(null);
   /** 오른쪽 지적 카드들 (원문에서 누르면 해당 카드로 목록을 굴린다) */
   const cardRefs = useRef<Record<string, HTMLLIElement | null>>({});
   /** 원문에서 칠한 자리들 (카드를 누르면 그 자리로 굴린다) */
   const markRefs = useRef<Record<string, HTMLElement | null>>({});
   /** 어느 쪽을 눌렀는지. 누른 쪽은 그대로 두고 반대쪽만 굴린다. */
   const pickedFrom = useRef<"text" | "list" | null>(null);
+  /** 같은 자리를 다시 눌러도 굴러가게 하는 셈. active 만 보면 값이 안 바뀌어 효과가 안 돈다. */
+  const [pickTick, setPickTick] = useState(0);
   /**
    * 결정값의 거울.
    *
@@ -213,6 +218,11 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "auto" });
   }, [tab]);
 
+  // 막대가 뜨면 그리로 옮겨 준다. 누른 자리에서 멀면 도는 줄 모른다.
+  useEffect(() => {
+    if (busy) busyRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [busy]);
+
   useEffect(() => {
     if (!result || !jumpToResult.current) return;
     jumpToResult.current = false;
@@ -231,9 +241,24 @@ export default function App() {
     const from = pickedFrom.current;
     pickedFrom.current = null;
     if (from === null) return;
-    const el = from === "text" ? cardRefs.current[active] : markRefs.current[active];
-    el?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
-  }, [active]);
+
+    if (from === "text") {
+      // 카드를 목록 **맨 위**로 올린다.
+      // 예전에는 scrollIntoView 의 block:'nearest' 를 썼는데, 그건 최소한만 굴려서
+      // 아래에 있던 카드가 화면 맨 아래에 걸쳤다. 읽으려면 눈을 아래로 내려야 한다.
+      // 목록만 직접 굴려서 맨 위에 놓는다. 쪽 전체는 움직이지 않는다.
+      const el = cardRefs.current[active];
+      const list = el?.parentElement;
+      if (!el || !list) return;
+      const gap = el.getBoundingClientRect().top - list.getBoundingClientRect().top;
+      list.scrollTo({ top: list.scrollTop + gap, behavior: "smooth" });
+      return;
+    }
+
+    // 카드를 눌렀을 때는 원문의 그 자리로. 이쪽은 쪽 전체가 움직이므로
+    // 이미 보이면 굴리지 않는다(읽던 자리를 잃지 않게).
+    markRefs.current[active]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [active, pickTick]);
 
   const findings = useMemo(
     () =>
@@ -264,6 +289,7 @@ export default function App() {
     if (f && filter !== "전체" && f.axis !== filter) setFilter("전체");
     pickedFrom.current = "text";
     setActive(key);
+    setPickTick((n) => n + 1);
   }
 
   /** 아직 넣을 말이 정해지지 않은 자리 */
@@ -425,8 +451,10 @@ export default function App() {
 
     if (withAi) {
       setBusy(true);
+      setPhase(1);
       try {
         const got = await reviewWithAi(cfg, src, r.findings);
+        setPhase(2);
         ai = got.findings;
         summary = got.summary;
         // 세 번 다 짚은 것은 켜 두고, 갈린 것은 꺼 둔다
@@ -470,6 +498,7 @@ export default function App() {
         }
 
         // 마지막으로 고쳐 놓은 것을 스스로 다시 본다
+        setPhase(3);
         try {
           const res = await verifyOn(src, all, dec);
           dec = res.dec;
@@ -483,6 +512,20 @@ export default function App() {
         failed = e instanceof Error ? e.message : String(e);
       } finally {
         setBusy(false);
+        setPhase(0);
+      }
+    }
+
+    // 고칠 수 있는 자리는 다 켜 둔 채로 보여 준다.
+    // 담당자가 바라는 것은 '고쳐진 글' 이지 '고칠 목록' 이 아니다. 되돌리고 싶으면
+    // 접힌 칸에서 '모두 되돌리기' 를 누르거나 하나씩 끄면 된다.
+    {
+      const all = [...r.findings, ...ai];
+      for (const f of all) {
+        const d = dec[f.key] ?? { on: false, pick: 0 };
+        // 검수에서 걸린 것은 그대로 꺼 둔다. 그건 켜면 안 되는 것이다.
+        if (notes[f.key]) continue;
+        if (replacementFor(f, d, src) !== null) dec[f.key] = { ...d, on: true };
       }
     }
 
@@ -704,7 +747,7 @@ export default function App() {
         {tab === "cases" && <CasesView />}
 
         {/* ------------------ 입력 ------------------ */}
-        {tab === "check" && result && !showInput && (
+        {tab === "check" && result && !showInput && !busy && (
           <section
             className="relative left-1/2 w-screen -translate-x-1/2 -mt-6 mb-6
                        px-4 sm:px-6 lg:px-8 py-3
@@ -731,7 +774,7 @@ export default function App() {
           </section>
         )}
 
-        {tab === "check" && (!result || showInput) && (
+        {tab === "check" && (!result || showInput) && !busy && (
           <div className="space-y-8 pb-12">
             {/* ── 입력 띠 ── */}
             <section
@@ -971,7 +1014,63 @@ export default function App() {
         )}
 
         {/* ------------------ 결과 (입력 아래에 이어 붙는다) ------------------ */}
-        {tab === "check" && result && (
+        {/*
+          도는 동안 지금 뭘 하고 있는지 보여 준다. 30초쯤 걸리는데 화면이 멈춰 있으면
+          고장 난 줄 안다. 단계 이름은 담당자가 알 필요가 없지만, **무언가 순서대로
+          진행되고 있다는 것**은 보여야 마음 놓고 기다린다.
+        */}
+        {tab === "check" && busy && (
+          <section ref={busyRef} className="mx-auto max-w-2xl py-10">
+            <div className={`${CARD} p-6`}>
+              <p className="flex items-center gap-2 text-lg font-bold text-slate-900">
+                <Loader2 className="w-5 h-5 animate-spin text-blue-600" aria-hidden="true" />
+                검토하는 중입니다
+              </p>
+              <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className="h-full rounded-full bg-blue-600 transition-all duration-700 ease-out"
+                  style={{ width: `${Math.round((phase / 3) * 100)}%` }}
+                />
+              </div>
+              <ol className="mt-4 space-y-2">
+                {[
+                  { n: 1, name: "용어와 표기를 대조합니다", sub: "용어 1,540개·어문 규범" },
+                  { n: 2, name: "문장을 읽고 있습니다", sub: "조사·호응·비문·군더더기" },
+                  { n: 3, name: "고친 곳을 다시 확인합니다", sub: "잘못 고친 데가 없는지" },
+                ].map((st) => {
+                  const done = phase > st.n;
+                  const now = phase === st.n;
+                  return (
+                    <li key={st.n} className="flex items-start gap-2.5 text-sm">
+                      <span
+                        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                          done
+                            ? "bg-blue-600 text-white"
+                            : now
+                              ? "bg-blue-100 text-blue-700"
+                              : "bg-slate-100 text-slate-400"
+                        }`}
+                      >
+                        {done ? "✓" : st.n}
+                      </span>
+                      <span>
+                        <span className={now ? "font-bold text-slate-900" : done ? "text-slate-600" : "text-slate-400"}>
+                          {st.name}
+                        </span>
+                        <span className="ml-2 text-xs text-slate-400">{st.sub}</span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+              <p className="mt-4 text-xs text-slate-500">
+                30초쯤 걸립니다. 그대로 두셔도 됩니다.
+              </p>
+            </div>
+          </section>
+        )}
+
+        {tab === "check" && result && !busy && (
           <div ref={resultRef} className="space-y-8 pb-12 scroll-mt-28">
             {/*
               담당자는 넣고 받으면 끝이어야 한다. 고친 글과 내려받기를 맨 위에 두고,
@@ -1331,6 +1430,7 @@ export default function App() {
                             onClick={() => {
                               pickedFrom.current = "list";
                               setActive(f.key);
+                              setPickTick((n) => n + 1);
                             }}
                             className={`${CARD} p-4 cursor-pointer transition-colors ${
                               active === f.key
