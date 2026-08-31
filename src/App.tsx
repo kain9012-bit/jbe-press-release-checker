@@ -204,6 +204,8 @@ export default function App() {
   const [verifyCount, setVerifyCount] = useState(0);
   /** 사람이 정해야 할 것 — 이름·시제·인용문처럼 기계가 정할 수 없는 자리 */
   const [confirms, setConfirms] = useState<Confirm[]>([]);
+  /** 묶음이 실패해 아예 검토받지 못한 문단 수 */
+  const [missed, setMissed] = useState(0);
   /** 세 단계를 다 돌 때까지 켜 둔다. 그동안 화면에는 아무것도 안 올린다. */
   const [busy, setBusy] = useState(false);
   /** 도는 동안 지금 몇 단계째인지 (0=안 돎, 1~3) */
@@ -487,6 +489,7 @@ export default function App() {
     let confirm: Confirm[] = [];
     let heldBack = 0;
     let ungrounded = 0;
+    let missed = 0;
     let failed = "";
 
     if (withAi) {
@@ -511,6 +514,7 @@ export default function App() {
         const got = await rewriteDraft(cfg, paras, hints);
         summary = got.summary;
         confirm = got.confirm;
+        missed = got.missed.length;
 
         // 3차 — 검사관. 사실이 바뀐 문단은 받지 않는다.
         setPhase(3);
@@ -561,7 +565,18 @@ export default function App() {
       }
     }
 
-    // 규칙만 돌렸을 때는 예전처럼 규칙의 고침을 켠다
+    /*
+     * AI 로 돌렸다가 실패했으면 아무것도 켜지 않는다. 규칙 고침을 대신 켜 놓으면
+     * 담당자는 그것을 'AI 가 검토한 결과' 로 읽는다. 수정본은 원문 그대로 둔다.
+     */
+    if (withAi && failed) dec = {};
+
+    /*
+     * 규칙만 돌렸을 때만 규칙의 고침을 켠다.
+     *
+     * AI 가 실패했을 때 규칙 고침을 대신 켜면 안 된다. 담당자는 그것을 'AI 가 검토한
+     * 결과' 로 읽는다. 실패는 실패라고 말하고 원문을 그대로 둔다.
+     */
     if (!withAi) {
       for (const f of r.findings) {
         const d = dec[f.key] ?? { on: false, pick: 0 };
@@ -587,6 +602,7 @@ export default function App() {
     setAiFindings(ai);
     setAiSummary(summary);
     setConfirms(confirm);
+    setMissed(failed ? 0 : missed);
     setVerifyCount(heldBack + ungrounded);
     setAiError(failed);
     setAiState(!withAi ? "idle" : failed ? "fail" : "done");
@@ -1175,6 +1191,32 @@ export default function App() {
             </section>
 
             {/*
+              실패는 접어 두면 안 된다. 못 봤으면 담당자는 원문을 검토된 글로 안다.
+              그리고 까닭에 따라 할 일이 다르다 — 시간 초과는 다시 누르면 되고,
+              키 문제는 설정을 봐야 한다.
+            */}
+            {missed > 0 && aiState === "done" && (
+              <Notice tone="amber" title={`${missed}문단은 검토받지 못했습니다`}>
+                검토 서버가 그 문단에 답하지 못했습니다. 그 문단은 <b>원문 그대로</b>입니다.
+                다시 <b>검토하기</b>를 누르면 그 문단도 검토됩니다.
+              </Notice>
+            )}
+
+            {aiState === "fail" && (
+              <Notice tone="red" title="AI 검토를 하지 못했습니다">
+                {/timeout|504|시간/i.test(aiError)
+                  ? "서버가 시간 안에 답하지 못했습니다. 잠시 뒤 검토하기를 다시 눌러 주세요."
+                  : /401|403|API key|key/i.test(aiError)
+                    ? "검토 서버의 키가 없거나 잘못됐습니다. 관리자에게 알려 주세요."
+                    : "검토 서버에 닿지 못했습니다. 잠시 뒤 다시 눌러 주세요."}
+                <br />
+                <b>아래 수정본은 고친 것이 아니라 원문 그대로입니다.</b>
+                <br />
+                <span className="font-mono text-xs break-all">{aiError}</span>
+              </Notice>
+            )}
+
+            {/*
               기계가 정할 수 없는 것은 정하지 않고 넘긴다.
 
               이름을 그대로 둘지, 시제가 실제와 맞는지, 인용문이 실제 발언과 같은지 —
@@ -1355,13 +1397,6 @@ export default function App() {
                 </Notice>
               )}
 
-              {aiState === "fail" && (
-                <Notice tone="red" title="AI 검토를 하지 못했습니다">
-                  키와 모형 이름을 확인해 주세요.
-                  <br />
-                  <span className="font-mono text-xs break-all">{aiError}</span>
-                </Notice>
-              )}
               {aiSummary && (
                 <Notice tone="blue" title="AI 총평">
                   {aiSummary}

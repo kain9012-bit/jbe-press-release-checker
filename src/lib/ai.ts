@@ -760,50 +760,122 @@ export interface RewriteResult {
   changes: Change[];
   confirm: Confirm[];
   summary: string;
-}
-
-function rewriteUser(paras: string[], hints: string[]): string {
-  const numbered = paras.map((p, i) => `[${i}] ${p}`).join('\n');
-  return `[규칙 검사가 걸러 낸 표현 — 참고만 하고, 문맥에 맞지 않으면 따르지 마라]
-${hints.length ? hints.join(', ') : '(없음)'}
-
-[고쳐 쓸 원고 — 문단 ${paras.length}개]
-${numbered}`;
+  /** 묶음이 실패해 아예 검토받지 못한 문단 번호 */
+  missed: number[];
 }
 
 /**
- * 원고 전체를 다시 쓰게 한다.
+ * 물어볼 글을 만든다.
  *
- * 문단 번호를 붙여 주고 번호째로 돌려받는다. 번호가 빠지면 그 문단은 원문 그대로 둔다.
- * 받은 글이 사실을 바꾸지 않았는지는 이 함수가 아니라 하네스(guardRewrite)가 본다.
+ * **원고 전체는 참고로 다 보여 주고, 고쳐 낼 문단만 따로 짚는다.**
+ * 시제나 앞뒤 흐름은 글 전체를 봐야 알 수 있으니 맥락은 다 준다. 다만 내야 할 글이
+ * 적어야 답이 빨리 나온다. 오래 걸리는 쪽은 읽는 것이 아니라 쓰는 것이다.
  */
-export async function rewriteDraft(
-  cfg: AiConfig,
-  paras: string[],
-  hints: string[] = [],
-): Promise<RewriteResult> {
-  const user = rewriteUser(paras, hints);
+function rewriteUser(paras: string[], hints: string[], want: number[]): string {
+  const all = paras.map((p, i) => `[${i}] ${p}`).join('\n');
+  const mine = want.map((i) => `[${i}] ${paras[i]}`).join('\n');
+  return `[규칙 검사가 걸러 낸 표현 — 참고만 하고, 문맥에 맞지 않으면 따르지 마라]
+${hints.length ? hints.join(', ') : '(없음)'}
+
+[보도자료 전문 — 앞뒤 흐름을 보라고 주는 것이다. 이 가운데 아래에 짚은 문단만 낸다]
+${all}
+
+[이번에 낼 문단 ${want.length}개 — 이 번호만 paragraphs 에 담는다]
+${mine}`;
+}
+
+/** 한 번에 몇 문단씩 물을 것인가 */
+export const BATCH = 3;
+
+const chunk = <T,>(xs: T[], n: number): T[][] => {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
+  return out;
+};
+
+async function askRewrite(cfg: AiConfig, user: string) {
   const raw =
     cfg.provider === 'anthropic'
       ? await callAnthropic(cfg, user, REWRITE_SYSTEM)
       : cfg.provider === 'gemini' || cfg.provider === 'proxy'
         ? await callGemini(cfg, user, REWRITE_SYSTEM, REWRITE_SCHEMA)
         : await callOpenAI(cfg, user, REWRITE_SYSTEM);
+  return parseJson(raw);
+}
 
-  const parsed = parseJson(raw);
-  const out = paras.slice();
-  for (const p of parsed.paragraphs ?? []) {
-    const i = Number(p?.i);
-    if (!Number.isInteger(i) || i < 0 || i >= paras.length) continue;
-    const t = String(p?.text ?? '').trim();
-    if (t) out[i] = t;
+/**
+ * 원고가 기준에 맞는지 보고, 어긋난 곳을 고쳐 온다.
+ *
+ * **몇 문단씩 나눠서 한꺼번에 물어본다.**
+ * 원고를 통째로 물으면 답이 길어서 오래 걸린다. 실제로 중계 서버(버셀 엣지)가 25초를
+ * 못 넘겨 FUNCTION_INVOCATION_TIMEOUT 으로 끊겼다. 나눠서 나란히 물으면 한 번에
+ * 내야 할 글이 3분의 1로 줄어 훨씬 빨리 끝나고, 기다리는 시간은 오히려 짧아진다.
+ * 맥락은 잃지 않는다 — 매번 원고 전문을 같이 준다.
+ *
+ * 한 묶음이 실패해도 나머지는 살린다. 실패한 문단은 원문 그대로 남는다.
+ */
+export async function rewriteDraft(
+  cfg: AiConfig,
+  paras: string[],
+  hints: string[] = [],
+  batch: number = BATCH,
+): Promise<RewriteResult> {
+  const groups = chunk(
+    paras.map((_, i) => i),
+    Math.max(1, batch),
+  );
+  const answers = await Promise.allSettled(
+    groups.map((want) => askRewrite(cfg, rewriteUser(paras, hints, want))),
+  );
+
+  // 하나도 못 받았으면 그건 실패다. 원문을 그대로 돌려주면 '이상 없음' 으로 읽힌다.
+  const ok = answers.filter((a) => a.status === 'fulfilled');
+  if (ok.length === 0) {
+    const first = answers[0];
+    throw first && first.status === 'rejected'
+      ? first.reason
+      : new Error('AI 검토를 받지 못했습니다.');
   }
-  return {
-    paragraphs: out,
-    changes: (parsed.changes ?? []) as Change[],
-    confirm: (parsed.confirm ?? []) as Confirm[],
-    summary: String(parsed.summary ?? ''),
-  };
+
+  const out = paras.slice();
+  const changes: Change[] = [];
+  const confirm: Confirm[] = [];
+  const missed: number[] = [];
+  let summary = '';
+  answers.forEach((a, gi) => {
+    if (a.status !== 'fulfilled') missed.push(...groups[gi]);
+  });
+  for (const a of answers) {
+    if (a.status !== 'fulfilled') continue;
+    const parsed = a.value;
+    for (const p of parsed.paragraphs ?? []) {
+      const i = Number(p?.i);
+      if (!Number.isInteger(i) || i < 0 || i >= paras.length) continue;
+      const t = String(p?.text ?? '').trim();
+      if (t) out[i] = t;
+    }
+    changes.push(...((parsed.changes ?? []) as Change[]));
+    confirm.push(...((parsed.confirm ?? []) as Confirm[]));
+    if (!summary) summary = String(parsed.summary ?? '');
+  }
+
+  // 같은 말을 여러 묶음이 저마다 적어 낸다. 한 번씩만 남긴다.
+  const seen = new Set<string>();
+  const uniqChanges = changes.filter((c) => {
+    const k = `${c.from}→${c.to}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const seenC = new Set<string>();
+  const uniqConfirm = confirm.filter((c) => {
+    const k = c.about?.trim() ?? '';
+    if (!k || seenC.has(k)) return false;
+    seenC.add(k);
+    return true;
+  });
+
+  return { paragraphs: out, changes: uniqChanges, confirm: uniqConfirm, summary, missed };
 }
 
 /**
@@ -818,16 +890,11 @@ export async function rewriteAgain(
   reasons: string[],
 ): Promise<Record<number, string>> {
   if (indexes.length === 0) return {};
-  const body = indexes
-    .map((i, k) => `[${i}] (앞서 낸 답이 걸린 까닭: ${reasons[k]})\n${paras[i]}`)
-    .join('\n\n');
-  const raw =
-    cfg.provider === 'anthropic'
-      ? await callAnthropic(cfg, body, REWRITE_SYSTEM)
-      : cfg.provider === 'gemini' || cfg.provider === 'proxy'
-        ? await callGemini(cfg, body, REWRITE_SYSTEM, REWRITE_SCHEMA)
-        : await callOpenAI(cfg, body, REWRITE_SYSTEM);
-  const parsed = parseJson(raw);
+  const body = `${rewriteUser(paras, [], indexes)}
+
+[앞서 낸 답이 걸린 까닭 — 이번에는 이것을 어기지 마라]
+${indexes.map((i, k) => `[${i}] ${reasons[k]}`).join('\n')}`;
+  const parsed = await askRewrite(cfg, body);
   const out: Record<number, string> = {};
   for (const p of parsed.paragraphs ?? []) {
     const i = Number(p?.i);
