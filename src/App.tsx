@@ -160,18 +160,18 @@ export default function App() {
   const [aiError, setAiError] = useState("");
   const [cfg, setCfg] = useState<AiConfig>(loadCfg);
   const [showCfg, setShowCfg] = useState(false);
-  /** 키가 없어 설정 창을 열었을 때, 저장 뒤 이어서 할 일 */
-  const [afterKey, setAfterKey] = useState<"run" | "add" | "fill" | null>(null);
   const [filter, setFilter] = useState<"전체" | Axis>("전체");
   const [active, setActive] = useState<string | null>(null);
   const [copied, setCopied] = useState("");
   /** 수정본에서 고치기 전 말도 같이 보여 줄지 */
   const [showFrom, setShowFrom] = useState(false);
-  const [filling, setFilling] = useState(false);
   const [fillNote, setFillNote] = useState('');
   /** 검수에서 걸린 자리 — key → 왜 잘못인지 */
   const [verifyNotes, setVerifyNotes] = useState<Record<string, string>>({});
-  const [verifying, setVerifying] = useState(false);
+  /** 세 단계를 다 돌 때까지 켜 둔다. 그동안 화면에는 아무것도 안 올린다. */
+  const [busy, setBusy] = useState(false);
+  /** 키를 넣으러 설정 창에 갔다가 돌아오면 검토를 이어야 하는지 */
+  const resume = useRef(false);
   const [exportError, setExportError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
@@ -274,59 +274,6 @@ export default function App() {
       ),
     [findings, decisions, source],
   );
-
-  /**
-   * 자동으로 못 고치는 자리를 AI 에게 물어 채운다.
-   *
-   * ‘을 통해 → (으)로 / ~하여’ 처럼 앞말에 따라 달라지는 것은 규칙으로 정할 수 없다.
-   * 문장을 같이 주고 그 자리에 그대로 끼울 말을 받아 온다.
-   */
-  async function fillWithAi() {
-    if (blanks.length === 0) return;
-    if (!isConfigured(cfg)) {
-      setAfterKey('fill');
-      setShowCfg(true);
-      return;
-    }
-    setFilling(true);
-    setAiError('');
-    try {
-      const targets: BlankTarget[] = blanks.slice(0, 40).map((f) => ({
-        id: f.key,
-        text: f.text,
-        why: f.why,
-        context: sentenceAround(source, f.start, f.end),
-        before: wordBefore(source, f.start),
-      }));
-      const fills = await fillBlanks(cfg, targets);
-      const n = Object.keys(fills).length;
-      let held = 0;
-      putDecisions((prev) => {
-        const next = { ...prev };
-        for (const [key, rep] of Object.entries(fills)) {
-          const d = next[key] ?? { on: false, pick: 0 };
-          const f = findings.find((x) => x.key === key);
-          // 시제가 바뀐 제안은 넣어 두되 켜지는 않는다. 눈으로 보고 정하시라는 뜻이다.
-          const risky = f ? tenseChanged(f.text, rep) : false;
-          if (risky) held += 1;
-          next[key] = { ...d, custom: rep, on: !risky };
-        }
-        return next;
-      });
-      setFillNote(
-        n === 0
-          ? 'AI가 채울 만한 자리를 찾지 못했습니다.'
-          : `${n}곳을 AI가 채웠습니다.` +
-              (held ? ` 그중 ${held}곳은 시제가 바뀌어 꺼 두었습니다.` : '') +
-              ' 넣은 말이 맞는지 확인해 주세요.',
-      );
-    } catch (e) {
-      setAiError(e instanceof Error ? e.message : String(e));
-      setAiState('fail');
-    } finally {
-      setFilling(false);
-    }
-  }
 
   /** 넣을 수 있는 것을 한꺼번에 켜고 끈다 */
   function setAll(on: boolean) {
@@ -442,6 +389,15 @@ export default function App() {
    * 예전에는 검토를 누른 뒤 결과 화면에서 다시 'AI 검토 추가' 를 눌러야 해서
    * 두 단계인 줄 모르고 지나치기 쉬웠다.
    */
+  /**
+   * 검토 시작.
+   *
+   * 세 단계를 다 돌 때까지 화면에 아무것도 올리지 않는다.
+   *
+   * 전에는 단계가 끝날 때마다 결과를 조금씩 얹었다. 1차 지적이 먼저 뜨고, 2차가 붙고,
+   * 3차가 그중 몇 개를 도로 꺼 놓는 식이었다. 만드는 쪽에는 진행이 보여 좋지만 **쓰는
+   * 사람에게는 결과가 눈앞에서 두 번 바뀌는 것**이다. 다 끝난 것을 한 번에 보여 준다.
+   */
   async function run(withAi: boolean) {
     const t = text.trim();
     if (!t) return;
@@ -455,80 +411,98 @@ export default function App() {
       부제: meta.부제.filter((x) => x.trim()),
     };
     const doc: Doc = { meta: nextMeta, body: split.본문 };
-    setMeta(nextMeta);
-    setBody(split.본문);
-
     const src = composeSource(doc);
     if (!src.trim()) return;
+
     const r = analyze(src);
+    // 화면에 올리기 전까지는 전부 여기 안에서만 굴린다
+    let dec = defaultDecisions(r.findings);
+    let ai: Finding[] = [];
+    let summary = "";
+    let notes: Record<string, string> = {};
+    let note = "";
+    let failed = "";
+
+    if (withAi) {
+      setBusy(true);
+      try {
+        const got = await reviewWithAi(cfg, src, r.findings);
+        ai = got.findings;
+        summary = got.summary;
+        // 세 번 다 짚은 것은 켜 두고, 갈린 것은 꺼 둔다
+        for (const f of ai) dec[f.key] = { on: f.confident === true, pick: 0 };
+
+        const all = [...r.findings, ...ai];
+
+        // 규칙이 답을 정하지 못한 자리를 채운다
+        const stuck = all.filter(
+          (f) => replacementFor(f, dec[f.key] ?? { on: false, pick: 0 }, src) === null,
+        );
+        if (stuck.length) {
+          try {
+            const fills = await fillBlanks(
+              cfg,
+              stuck.slice(0, 40).map((f) => ({
+                id: f.key,
+                text: f.text,
+                why: f.why,
+                context: sentenceAround(src, f.start, f.end),
+                before: wordBefore(src, f.start),
+              })),
+            );
+            let held = 0;
+            for (const [key, rep] of Object.entries(fills)) {
+              const d = dec[key] ?? { on: false, pick: 0 };
+              const f = stuck.find((x) => x.key === key);
+              const risky = f ? tenseChanged(f.text, rep) : false;
+              if (risky) held += 1;
+              dec[key] = { ...d, custom: rep, on: !risky };
+            }
+            const n = Object.keys(fills).length;
+            if (n)
+              note =
+                `규칙이 정하지 못한 ${n}곳도 AI가 채웠습니다.` +
+                (held ? ` 그중 ${held}곳은 시제가 바뀌어 꺼 두었습니다.` : "") +
+                " 확인해 주세요.";
+          } catch {
+            /* 채우기가 실패해도 검토 결과는 살린다 */
+          }
+        }
+
+        // 마지막으로 고쳐 놓은 것을 스스로 다시 본다
+        try {
+          const res = await verifyOn(src, all, dec);
+          dec = res.dec;
+          notes = res.notes;
+          const n = Object.keys(notes).length;
+          if (n) note = (note ? note + " " : "") + `검수에서 ${n}곳이 걸려 꺼 두었습니다.`;
+        } catch {
+          /* 검수가 실패해도 앞 단계 결과는 살린다 */
+        }
+      } catch (e) {
+        failed = e instanceof Error ? e.message : String(e);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    // 여기서 한 번에 화면에 올린다
+    setMeta(nextMeta);
+    setBody(split.본문);
     setBaseDoc(doc);
     setSource(src);
     setResult(r);
-    putDecisions(defaultDecisions(r.findings));
-    setAiFindings([]);
-    setAiSummary("");
-    setAiState("idle");
-    setAiError("");
-    setVerifyNotes({});
+    putDecisions(dec);
+    setAiFindings(ai);
+    setAiSummary(summary);
+    setVerifyNotes(notes);
+    setFillNote(note);
+    setAiError(failed);
+    setAiState(!withAi ? "idle" : failed ? "fail" : "done");
     setActive(null);
     setExportError("");
     jumpToResult.current = true;
     setShowInput(false);
-
-    if (withAi) {
-      const found = await askAi(src, r.findings);
-      // 규칙이 답을 정하지 못한 자리도 이참에 같이 채운다
-      const stuck = r.findings.filter((f) => !isApplicable(f.fixes[0] ?? ''));
-      if (stuck.length) {
-        setFilling(true);
-        try {
-          const fills = await fillBlanks(
-            cfg,
-            stuck.slice(0, 40).map((f) => ({
-              id: f.key,
-              text: f.text,
-              why: f.why,
-              context: sentenceAround(src, f.start, f.end),
-              before: wordBefore(src, f.start),
-            })),
-          );
-          const n = Object.keys(fills).length;
-          let held = 0;
-          putDecisions((prev) => {
-            const next = { ...prev };
-            for (const [key, rep] of Object.entries(fills)) {
-              const d = next[key] ?? { on: false, pick: 0 };
-              const f = stuck.find((x) => x.key === key);
-              const risky = f ? tenseChanged(f.text, rep) : false;
-              if (risky) held += 1;
-              next[key] = { ...d, custom: rep, on: !risky };
-            }
-            return next;
-          });
-          if (n)
-            setFillNote(
-              `규칙이 정하지 못한 ${n}곳도 AI가 채웠습니다.` +
-                (held ? ` 그중 ${held}곳은 시제가 바뀌어 꺼 두었습니다.` : '') +
-                ' 확인해 주세요.',
-            );
-        } catch {
-          /* 채우기가 실패해도 검토 결과는 살린다 */
-        } finally {
-          setFilling(false);
-        }
-      }
-
-      // 마지막으로 고쳐 놓은 것을 스스로 다시 본다
-      setVerifying(true);
-      try {
-        const n = await verifyPass(src, [...r.findings, ...found]);
-        if (n) setFillNote((v) => (v ? v + " " : "") + `검수에서 ${n}곳이 걸려 꺼 두었습니다.`);
-      } catch {
-        /* 검수가 실패해도 앞 단계 결과는 살린다 */
-      } finally {
-        setVerifying(false);
-      }
-    }
   }
 
   /** AI 에게 문맥 검토를 맡긴다. 규칙으로 이미 잡은 것은 넘겨서 중복 지적을 막는다. */
@@ -562,11 +536,17 @@ export default function App() {
    * 고친 자리만 옳으냐고 묻기 때문에 답을 그 자리에 그대로 되돌릴 수 있다.
    * 걸린 자리는 지우지 않고 **꺼 둔다** — 판단은 사람이 한다.
    */
-  async function verifyPass(src: string, all: Finding[]): Promise<number> {
-    // 켜진 것만 보면 안 된다. AI 제안은 기본이 꺼짐이라, 켜기 전에 미리 걸러 줘야
-    // 사람이 ‘모두 고치기’ 를 눌렀을 때 나쁜 것이 딸려 들어가지 않는다.
-    // 그래서 넣을 말이 정해진 자리는 켜 놓은 셈 치고 전부 검수한다.
-    const dec = decisionsRef.current;
+  /**
+   * 검수 — 화면을 건드리지 않고 결정값만 돌려주는 판.
+   *
+   * run() 은 세 단계를 다 돌고 나서 한 번에 화면에 올리므로, 중간에 상태를 만지면 안 된다.
+   */
+  async function verifyOn(
+    src: string,
+    all: Finding[],
+    dec: Record<string, Decision>,
+  ): Promise<{ dec: Record<string, Decision>; notes: Record<string, string> }> {
+    // 켜진 것만 보면 안 된다. 켜기 전에 걸러 두어야 나쁜 것이 딸려 들어가지 않는다.
     const probe: Record<string, Decision> = { ...dec };
     for (const f of all) {
       const d = probe[f.key] ?? { on: false, pick: 0 };
@@ -574,7 +554,6 @@ export default function App() {
     }
     const parts = buildRevisedParts(src, all, probe);
     const revisedText = parts.map((x) => x.text).join("");
-
     const edits: EditToCheck[] = [];
     let at = 0;
     for (const part of parts) {
@@ -588,41 +567,22 @@ export default function App() {
       }
       at += part.text.length;
     }
-    if (edits.length === 0) return 0;
+    if (edits.length === 0) return { dec, notes: {} };
 
-    const wrong = await verifyEdits(cfg, edits.slice(0, 60));
-    const keys = Object.keys(wrong);
-    if (keys.length === 0) return 0;
-    putDecisions((prev) => {
-      const next = { ...prev };
-      for (const k of keys) if (next[k]) next[k] = { ...next[k], on: false };
-      return next;
-    });
-    setVerifyNotes(wrong);
-    return keys.length;
+    const notes = await verifyEdits(cfg, edits.slice(0, 60));
+    const next = { ...dec };
+    for (const k of Object.keys(notes)) if (next[k]) next[k] = { ...next[k], on: false };
+    return { dec: next, notes };
   }
 
-  /** 결과 화면에서 뒤늦게 AI 검토를 붙일 때 */
-  function addAi() {
-    if (!result) return;
-    if (!isConfigured(cfg)) {
-      setAfterKey("add");
-      setShowCfg(true);
-      return;
-    }
-    void askAi(source, result.findings);
-  }
-
-  /** 키를 넣으러 갔다가 돌아왔을 때 이어서 할 일 */
+  /** 키를 넣으러 갔다가 돌아오면 하려던 검토를 잇는다 */
   function onSaveCfg(v: AiConfig) {
     setCfg(v);
     setShowCfg(false);
-    if (!isConfigured(v) || !afterKey) return;
-    const next = afterKey;
-    setAfterKey(null);
-    if (next === "run") void run(true);
-    else if (next === "fill") void fillWithAi();
-    else if (result) void askAi(source, result.findings);
+    if (isConfigured(v) && resume.current) {
+      resume.current = false;
+      void run(true);
+    }
   }
 
   /* ---------------- 내보내기 ---------------- */
@@ -974,18 +934,18 @@ export default function App() {
                       onClick={() => {
                         if (!readyToRun) return;
                         if (!isConfigured(cfg)) {
-                          setAfterKey("run");
+                          resume.current = true;
                           setShowCfg(true);
                           return;
                         }
                         void run(true);
                       }}
-                      disabled={!readyToRun || aiState === "run" || filling || verifying}
+                      disabled={!readyToRun || busy}
                       className="h-12 px-5 sm:px-8 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300
                                  text-white font-bold text-lg rounded-lg transition-colors
                                  flex items-center gap-2 shrink-0"
                     >
-                      {aiState === "run" || filling || verifying ? (
+                      {busy ? (
                         <Loader2
                           className="w-5 h-5 animate-spin"
                           aria-hidden="true"
@@ -994,15 +954,11 @@ export default function App() {
                         <Sparkles className="w-5 h-5" aria-hidden="true" />
                       )}
                       <span>
-                        {aiState === "run"
-                          ? "문맥 보는 중"
-                          : filling
-                            ? "빈자리 채우는 중"
-                            : verifying
-                              ? "검수하는 중"
-                              : hasProxy()
-                                ? "검토하기"
-                                : "AI까지 검토"}
+                        {busy
+                          ? "검토하는 중"
+                          : hasProxy()
+                            ? "검토하기"
+                            : "AI까지 검토"}
                       </span>
                       <ArrowRight className="w-4 h-4" aria-hidden="true" />
                     </button>
@@ -1163,21 +1119,6 @@ export default function App() {
                     <Undo2 className="w-4 h-4" aria-hidden="true" />
                     모두 되돌리기
                   </button>
-                  {blanks.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={fillWithAi}
-                      disabled={filling}
-                      className={BTN_GHOST}
-                    >
-                      {filling ? (
-                        <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-                      ) : (
-                        <Sparkles className="w-4 h-4" aria-hidden="true" />
-                      )}
-                      못 고친 {blanks.length}곳 AI로 채우기
-                    </button>
-                  )}
                   <button
                     type="button"
                     onClick={() => setShowFrom((v) => !v)}
@@ -1217,26 +1158,11 @@ export default function App() {
                   검토 결과
                 </SectionTitle>
                 <div className="flex flex-wrap gap-2">
-                  {aiFindings.length === 0 && (
-                    <button
-                      type="button"
-                      onClick={addAi}
-                      disabled={aiState === "run"}
-                      className={BTN_GHOST}
-                    >
-                      {aiState === "run" ? (
-                        <Loader2
-                          className="w-4 h-4 animate-spin"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <Sparkles className="w-4 h-4" aria-hidden="true" />
-                      )}
-                      {aiState === "run"
-                        ? "AI가 보는 중"
-                        : "AI 문맥 검토도 받기"}
-                    </button>
-                  )}
+                  {/*
+                    'AI 문맥 검토도 받기' 를 없앴다. 중계가 붙으면 AI 는 늘 돌고,
+                    안 붙었으면 첫 화면에서 'AI까지 검토' 를 고르면 된다. 결과 화면에서
+                    같은 것을 또 권하는 단추는 자리만 차지한다.
+                  */}
                 </div>
               </div>
 
@@ -1258,17 +1184,17 @@ export default function App() {
                       n: "2차",
                       name: "AI 검토",
                       done: aiState === "done",
-                      running: aiState === "run" || filling,
+                      running: busy,
                       say: aiState === "done" ? `${aiFindings.length}건` : "안 돌림",
                       sub: "조사·호응·비문·군더더기",
                     },
                     {
                       n: "3차",
                       name: "재검토",
-                      done: aiState === "done" && !verifying,
-                      running: verifying,
+                      done: aiState === "done",
+                      running: busy,
                       say:
-                        aiState === "done" && !verifying
+                        aiState === "done"
                           ? Object.keys(verifyNotes).length
                             ? `${Object.keys(verifyNotes).length}건 되돌림`
                             : "이상 없음"
@@ -1309,7 +1235,7 @@ export default function App() {
                 무엇인지 그 자리에서 밝힌다. 자가검증 도구가 잘못 괜찮다고 말하는 것은
                 아무 말도 안 하느니만 못하다.
               */}
-              {aiFindings.length === 0 && aiState !== "run" && (
+              {aiState !== "done" && !busy && (
                 <Notice tone="amber" title="조사·호응·비문은 아직 안 봤습니다">
                   규칙은 용어 목록과 표기 규범을 대조할 뿐입니다. ‘공연로’ 처럼 조사가
                   틀린 것, 주어와 서술어가 어긋난 것, 군더더기는{" "}
@@ -1719,7 +1645,7 @@ export default function App() {
           value={cfg}
           onSave={onSaveCfg}
           onClose={() => {
-            setAfterKey(null);
+            resume.current = false;
             setShowCfg(false);
           }}
         />
