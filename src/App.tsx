@@ -46,7 +46,7 @@ import {
   type Decision,
   type Finding,
 } from "./lib/analyze";
-import { guardRewrite, diffAll, type Segment } from "./lib/rewrite";
+import { guardRewrite, diffAll, onlyGrounded, type Segment } from "./lib/rewrite";
 import {
   DEFAULT_MODEL,
   rewriteDraft,
@@ -486,6 +486,7 @@ export default function App() {
     let summary = "";
     let confirm: Confirm[] = [];
     let heldBack = 0;
+    let ungrounded = 0;
     let failed = "";
 
     if (withAi) {
@@ -538,7 +539,18 @@ export default function App() {
          * 화면에 칠하는 자리와 되돌리기는 틀릴 수 없는 쪽을 쓴다.
          */
         const segs = diffAll(paras, guarded.kept, SOURCE_SEP);
-        ai = segs.map((sg) => toFinding(sg, src, got.changes));
+
+        /*
+         * 근거 없는 고침은 되돌린다.
+         *
+         * 이 도구는 담당자가 쓴 보도자료가 기준에 맞는지 보는 곳이지, 더 나은 글로
+         * 바꿔 주는 곳이 아니다. 그래서 **어느 기준에 걸려서 고쳤는지 대지 못한
+         * 자리는 반영하지 않는다.** 반영하지 않는다는 것은 그 자리에 원문을 그대로
+         * 둔다는 뜻이고, 화면에도 올리지 않는다.
+         */
+        const grounded = onlyGrounded(segs, got.changes);
+        ungrounded = segs.length - grounded.length;
+        ai = grounded.map((sg) => toFinding(sg, src, got.changes));
         // 고칠 말은 사전을 거치지 않고 그대로 넣는다. AI 가 문맥을 보고 쓴 말이다.
         for (const f of ai) dec[f.key] = { on: true, pick: 0, custom: f.fixes[0] };
       } catch (e) {
@@ -575,7 +587,7 @@ export default function App() {
     setAiFindings(ai);
     setAiSummary(summary);
     setConfirms(confirm);
-    setVerifyCount(heldBack);
+    setVerifyCount(heldBack + ungrounded);
     setAiError(failed);
     setAiState(!withAi ? "idle" : failed ? "fail" : "done");
     setActive(null);
@@ -1292,10 +1304,10 @@ export default function App() {
                       say:
                         aiState === "done"
                           ? verifyCount
-                            ? `${verifyCount}문단 물리침`
-                            : "사실 그대로"
+                            ? `${verifyCount}곳 되돌림`
+                            : "이상 없음"
                           : "안 돌림",
-                      sub: "숫자·이름·문단이 바뀌지 않았는지",
+                      sub: "사실이 바뀌지 않았는지 · 근거 없는 고침이 없는지",
                     },
                   ] as const
                 ).map((st) => (
