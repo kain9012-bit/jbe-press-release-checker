@@ -1,5 +1,6 @@
 import { guard1, type Tally } from './stages';
 import { PATTERN_RULES, EXTRA_LOANWORDS, ROMAN_KOREAN, checkDueum, type Axis } from '../data/rules';
+export type { Axis };
 import termsRaw from '../data/terms.json';
 import appendixRaw from '../data/appendix.json';
 

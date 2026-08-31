@@ -8,7 +8,10 @@ import type { ReleaseMeta } from './hwpxOut';
  * 문단 개수는 그대로 유지된다.
  */
 
-const SEP = '\n\n';
+export const SEP = '\n\n';
+
+/** 이어 붙인 글을 다시 문단으로 쪼갠다 (composeSource 의 짝) */
+export const splitSource = (src: string): string[] => src.split(SEP);
 
 export interface Doc {
   meta: ReleaseMeta;

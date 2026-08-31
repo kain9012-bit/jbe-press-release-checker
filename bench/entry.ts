@@ -4,3 +4,5 @@ export { trailingJosaFix, insideByunggi } from '../src/lib/analyze';
 export { analyze, buildRevised, buildRevisedParts, defaultDecisions, isApplicable, replacementFor } from '../src/lib/analyze';
 export { reviewWithAi, fillBlanks, verifyEdits, tenseChanged } from '../src/lib/ai';
 export type { AiConfig } from '../src/lib/ai';
+export { checkParagraph, guardRewrite, diffSegments, diffAll } from '../src/lib/rewrite';
+export { rewriteDraft, rewriteAgain } from '../src/lib/ai';

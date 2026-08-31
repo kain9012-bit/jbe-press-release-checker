@@ -46,17 +46,16 @@ import {
   type Decision,
   type Finding,
 } from "./lib/analyze";
+import { guardRewrite, diffAll, type Segment } from "./lib/rewrite";
 import {
   DEFAULT_MODEL,
-  reviewWithAi,
-  fillBlanks,
-  tenseChanged,
-  verifyEdits,
+  rewriteDraft,
+  rewriteAgain,
   hasProxy,
   isConfigured,
   type AiConfig,
-  type EditToCheck,
-  type BlankTarget,
+  type Change,
+  type Confirm,
 } from "./lib/ai";
 import { parsePressRelease } from "./lib/hwp";
 import {
@@ -65,7 +64,14 @@ import {
   EMPTY_META,
   type ReleaseMeta,
 } from "./lib/hwpxOut";
-import { composeSource, decompose, splitPastedText, type Doc } from "./lib/doc";
+import {
+  composeSource,
+  decompose,
+  splitPastedText,
+  splitSource,
+  SEP as SOURCE_SEP,
+  type Doc,
+} from "./lib/doc";
 
 const AXES = ["용이성", "정확성", "소통성"] as const;
 type Axis = (typeof AXES)[number];
@@ -134,6 +140,35 @@ function sentenceAround(text: string, start: number, end: number) {
   return text.slice(from, to).trim().slice(0, 300);
 }
 
+/**
+ * 두 글을 견주어 찾은 자리를 화면이 아는 모양(Finding)으로 바꾼다.
+ *
+ * AI 가 적어 준 내역에서 까닭과 갈래를 가져오되, **자리는 견준 결과를 쓴다.**
+ * 내역은 사람 말이라 틀릴 수 있고 자리는 틀릴 수 없다.
+ */
+function toFinding(sg: Segment, src: string, changes: Change[]): Finding {
+  const hit = changes.find(
+    (c) =>
+      c.from.trim() === sg.from.trim() ||
+      (c.from.trim().length > 1 && sg.from.includes(c.from.trim())),
+  );
+  const axis =
+    hit?.axis === "정확성" || hit?.axis === "소통성" ? hit.axis : "용이성";
+  return {
+    key: `ai-${sg.start}-${sg.end}`,
+    axis: axis as Finding["axis"],
+    sub: hit?.item?.trim() || "문맥 검토",
+    start: sg.start,
+    end: sg.end,
+    text: src.slice(sg.start, sg.end),
+    fixes: [sg.to],
+    why: hit?.why?.trim() || "AI 가 앞뒤 문맥을 보고 고쳐 쓴 자리입니다.",
+    src: "[검토] AI 문맥 검토 — 국립국어원 공문서등 평가 기준",
+    severity: "오류",
+    counted: true,
+  };
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>("check");
   const [text, setText] = useState("");
@@ -167,6 +202,8 @@ export default function App() {
   const [showFrom, setShowFrom] = useState(false);
   /** 3차가 바로잡은 자리 수 — 접힌 단계 표시에 숫자로만 쓴다 */
   const [verifyCount, setVerifyCount] = useState(0);
+  /** 사람이 정해야 할 것 — 이름·시제·인용문처럼 기계가 정할 수 없는 자리 */
+  const [confirms, setConfirms] = useState<Confirm[]>([]);
   /** 세 단계를 다 돌 때까지 켜 둔다. 그동안 화면에는 아무것도 안 올린다. */
   const [busy, setBusy] = useState(false);
   /** 도는 동안 지금 몇 단계째인지 (0=안 돎, 1~3) */
@@ -447,61 +484,63 @@ export default function App() {
     let dec = defaultDecisions(r.findings);
     let ai: Finding[] = [];
     let summary = "";
-    let fixedByVerify = 0;
-    let held = new Set<string>();
+    let confirm: Confirm[] = [];
+    let heldBack = 0;
     let failed = "";
 
     if (withAi) {
       setBusy(true);
       setPhase(1);
       try {
-        const got = await reviewWithAi(cfg, src, r.findings);
+        /*
+         * 여기가 뒤집힌 자리다.
+         *
+         * 전에는 규칙(낱말 사전)이 글을 고치고 AI 는 옆에서 거들었다. 그러면 사전에
+         * 없는 것은 영영 안 잡힌다 — ‘문서학습기능 → 문서 학습 기능’ 같은 띄어쓰기는
+         * 사전에 올릴 수 있는 것이 아니고, ‘K뚝배기’ 의 K 가 이름의 첫 글자라는 것도
+         * 사전은 모른다. 그래서 **AI 가 원고 전체를 고쳐 쓰고, 코드는 검사관이 된다.**
+         *
+         * 규칙은 없어지지 않았다. AI 에게 근거로 넘기고(hints) 점검표에 그대로 쓴다.
+         * 글자를 갈아 끼우는 일에서만 손을 뗀 것이다.
+         */
+        const paras = splitSource(src);
+        const hints = Array.from(new Set(r.findings.map((f) => f.text))).slice(0, 120);
+
         setPhase(2);
-        ai = got.findings;
+        const got = await rewriteDraft(cfg, paras, hints);
         summary = got.summary;
-        // 세 번 다 짚은 것은 켜 두고, 갈린 것은 꺼 둔다
-        for (const f of ai) dec[f.key] = { on: f.confident === true, pick: 0 };
+        confirm = got.confirm;
 
-        const all = [...r.findings, ...ai];
-
-        // 규칙이 답을 정하지 못한 자리를 채운다
-        const stuck = all.filter(
-          (f) => replacementFor(f, dec[f.key] ?? { on: false, pick: 0 }, src) === null,
-        );
-        if (stuck.length) {
+        // 3차 — 검사관. 사실이 바뀐 문단은 받지 않는다.
+        setPhase(3);
+        let guarded = guardRewrite(paras, got.paragraphs);
+        if (guarded.rejected.length) {
+          // 걸린 문단만 다시 묻는다. 잘 나온 문단까지 흔들 이유가 없다.
           try {
-            const fills = await fillBlanks(
+            const again = await rewriteAgain(
               cfg,
-              stuck.slice(0, 40).map((f) => ({
-                id: f.key,
-                text: f.text,
-                why: f.why,
-                context: sentenceAround(src, f.start, f.end),
-                before: wordBefore(src, f.start),
-              })),
+              paras,
+              guarded.rejected.map((x) => x.index),
+              guarded.rejected.map((x) => x.why),
             );
-            for (const [key, rep] of Object.entries(fills)) {
-              const d = dec[key] ?? { on: false, pick: 0 };
-              const f = stuck.find((x) => x.key === key);
-              // 시제가 바뀐 것은 넣지 않는다. 3차가 또 볼 것도 없이 여기서 버린다.
-              if (f && tenseChanged(f.text, rep)) continue;
-              dec[key] = { ...d, custom: rep, on: true };
-            }
+            const merged = guarded.kept.slice();
+            for (const [k, v] of Object.entries(again)) merged[Number(k)] = v;
+            guarded = guardRewrite(paras, merged);
           } catch {
-            /* 채우기가 실패해도 검토 결과는 살린다 */
+            /* 다시 묻기가 실패해도 앞서 받은 문단은 살린다 */
           }
         }
+        heldBack = guarded.rejected.length;
 
-        // 마지막으로 고쳐 놓은 것을 스스로 다시 본다
-        setPhase(3);
-        try {
-          const res = await verifyOn(src, all, dec);
-          dec = res.dec;
-          fixedByVerify = res.fixed;
-          held = res.held;
-        } catch {
-          /* 검수가 실패해도 앞 단계 결과는 살린다 */
-        }
+        /*
+         * 무엇이 바뀌었는지는 AI 말이 아니라 **두 글을 견주어** 찾는다.
+         * AI 는 고친 내역도 같이 주지만 그 말은 자리를 잘못 짚거나 빠뜨릴 수 있다.
+         * 화면에 칠하는 자리와 되돌리기는 틀릴 수 없는 쪽을 쓴다.
+         */
+        const segs = diffAll(paras, guarded.kept, SOURCE_SEP);
+        ai = segs.map((sg) => toFinding(sg, src, got.changes));
+        // 고칠 말은 사전을 거치지 않고 그대로 넣는다. AI 가 문맥을 보고 쓴 말이다.
+        for (const f of ai) dec[f.key] = { on: true, pick: 0, custom: f.fixes[0] };
       } catch (e) {
         failed = e instanceof Error ? e.message : String(e);
       } finally {
@@ -510,130 +549,39 @@ export default function App() {
       }
     }
 
-    /*
-     * 여기서 지적을 빼지 않는다.
-     *
-     * 한때는 3차가 걸러 낸 것을 목록에서 없앴다. 그랬더니 부제의 '꿈 UP! 미래 UP!' 처럼
-     * 규칙이 멀쩡히 잡아 낸 자리가 고쳐지지도 않고 보이지도 않게 됐다. 검수는 고른 말을
-     * 더 나은 말로 바꿀 뿐이다. 규범에 걸린 자리는 끝까지 목록에 남는다.
-     *
-     * 고칠 말이 있는 것은 전부 켠다. '모두 고치기' 를 누른 상태로 나온다.
-     */
-    for (const f of [...r.findings, ...ai]) {
-      // 3차가 '그대로 두라' 고 한 자리는 켜지 않는다. 목록에는 그대로 남는다.
-      if (held.has(f.key)) continue;
-      const d = dec[f.key] ?? { on: false, pick: 0 };
-      if (replacementFor(f, d, src) !== null) dec[f.key] = { ...d, on: true };
+    // 규칙만 돌렸을 때는 예전처럼 규칙의 고침을 켠다
+    if (!withAi) {
+      for (const f of r.findings) {
+        const d = dec[f.key] ?? { on: false, pick: 0 };
+        if (replacementFor(f, d, src) !== null) dec[f.key] = { ...d, on: true };
+      }
     }
+
+    /*
+     * AI 로 돌렸으면 규칙의 지적은 화면에 올리지 않는다.
+     *
+     * 같은 자리를 두 번 짚게 되고, 무엇보다 규칙의 고침은 이제 쓰이지 않는다.
+     * 규칙은 AI 에게 넘길 근거와 점검표·오류율 집계로만 남는다.
+     */
+    const shown: AnalyzeResult = withAi && !failed ? { ...r, findings: [] } : r;
 
     // 여기서 한 번에 화면에 올린다
     setMeta(nextMeta);
     setBody(split.본문);
     setBaseDoc(doc);
     setSource(src);
-    setResult(r);
+    setResult(shown);
     putDecisions(dec);
     setAiFindings(ai);
     setAiSummary(summary);
-    setVerifyCount(fixedByVerify);
+    setConfirms(confirm);
+    setVerifyCount(heldBack);
     setAiError(failed);
     setAiState(!withAi ? "idle" : failed ? "fail" : "done");
     setActive(null);
     setExportError("");
     jumpToResult.current = true;
     setShowInput(false);
-  }
-
-  /** AI 에게 문맥 검토를 맡긴다. 규칙으로 이미 잡은 것은 넘겨서 중복 지적을 막는다. */
-  async function askAi(src: string, ruleFindings: Finding[]): Promise<Finding[]> {
-    setAiState("run");
-    setAiError("");
-    try {
-      const r = await reviewWithAi(cfg, src, ruleFindings);
-      setAiFindings(r.findings);
-      setAiSummary(r.summary);
-      putDecisions((d) => {
-        const next = { ...d };
-        // 세 번 다 짚은 것은 켜 두고, 갈린 것은 꺼 둔다. 사람이 읽을 것을 늘리지 않는다.
-        for (const f of r.findings) next[f.key] = { on: f.confident === true, pick: 0 };
-        return next;
-      });
-      setAiState("done");
-      return r.findings;
-    } catch (e) {
-      setAiError(e instanceof Error ? e.message : String(e));
-      setAiState("fail");
-      return [];
-    }
-  }
-
-  /**
-   * 검수 — 고쳐 놓은 것을 AI 가 스스로 다시 본다.
-   *
-   * 모형은 부를 때마다 답이 달라서 제가 제대로 붙인 병기를 다음 번에 떼어 내기도 한다.
-   * 사람이 전부 읽어 볼 수는 없으니 **넣기 전에** 한 번 더 묻는다. 새로 찾는 것이 아니라
-   * 고친 자리만 옳으냐고 묻기 때문에 답을 그 자리에 그대로 되돌릴 수 있다.
-   * 걸린 자리는 지우지 않고 **꺼 둔다** — 판단은 사람이 한다.
-   */
-  /**
-   * 검수 — 화면을 건드리지 않고 결정값만 돌려주는 판.
-   *
-   * run() 은 세 단계를 다 돌고 나서 한 번에 화면에 올리므로, 중간에 상태를 만지면 안 된다.
-   */
-  async function verifyOn(
-    src: string,
-    all: Finding[],
-    dec: Record<string, Decision>,
-  ): Promise<{ dec: Record<string, Decision>; fixed: number; held: Set<string> }> {
-    // 켜진 것만 보면 안 된다. 켜기 전에 걸러 두어야 나쁜 것이 딸려 들어가지 않는다.
-    const probe: Record<string, Decision> = { ...dec };
-    for (const f of all) {
-      const d = probe[f.key] ?? { on: false, pick: 0 };
-      if (replacementFor(f, d, src) !== null) probe[f.key] = { ...d, on: true };
-    }
-    const parts = buildRevisedParts(src, all, probe);
-    const revisedText = parts.map((x) => x.text).join("");
-    const edits: EditToCheck[] = [];
-    let at = 0;
-    for (const part of parts) {
-      if (part.from !== undefined && part.key) {
-        edits.push({
-          id: part.key,
-          from: part.from,
-          to: part.text,
-          after: sentenceAround(revisedText, at, at + part.text.length),
-        });
-      }
-      at += part.text.length;
-    }
-    if (edits.length === 0) return { dec, fixed: 0, held: new Set<string>() };
-
-    /*
-     * 3차가 문맥을 읽고 자리마다 판정해 온다.
-     *
-     *   다른 말이 왔다  → 그 말로 갈아 끼운다.
-     *   같은 말이 왔다  → '그대로 두라' 는 뜻이다. 그 자리만 끈다.
-     *
-     * 규칙은 낱말 사전이라 'K' 를 '케이(K)' 로 바꾸라고만 할 뿐, 그것이 'K뚝배기' 라는
-     * 시스템 이름의 첫 글자인지는 모른다. 그 판단은 사전에 손으로 적어 둘 수 있는 것이
-     * 아니라 문맥을 읽어야 아는 것이고, 그래서 여기서 한다.
-     *
-     * **끄는 것과 없애는 것은 다르다.** 지적은 목록에 그대로 남는다. 전에 이 둘을
-     * 섞어서 부제의 '꿈 UP! 미래 UP!' 이 통째로 사라졌다.
-     */
-    const fixes = await verifyEdits(cfg, edits.slice(0, 60));
-    const before = new Map(edits.map((e) => [e.id, e.from]));
-    const next = { ...dec };
-    const held = new Set<string>();
-    for (const [k, fix] of Object.entries(fixes)) {
-      if (fix === before.get(k)) {
-        held.add(k);
-        next[k] = { ...(next[k] ?? { pick: 0 }), on: false };
-        continue;
-      }
-      next[k] = { ...(next[k] ?? { on: false, pick: 0 }), custom: fix, on: true };
-    }
-    return { dec: next, fixed: Object.keys(fixes).length - held.size, held };
   }
 
   /** 키를 넣으러 갔다가 돌아오면 하려던 검토를 잇는다 */
@@ -1053,8 +1001,8 @@ export default function App() {
               <ol className="mt-4 space-y-2">
                 {[
                   { n: 1, name: "용어와 표기를 대조합니다", sub: "용어 1,540개·어문 규범" },
-                  { n: 2, name: "문장을 읽고 있습니다", sub: "조사·호응·비문·군더더기" },
-                  { n: 3, name: "고친 곳을 다시 확인합니다", sub: "잘못 고친 데가 없는지" },
+                  { n: 2, name: "원고를 고쳐 쓰고 있습니다", sub: "표기·띄어쓰기·조사·군더더기" },
+                  { n: 3, name: "사실이 바뀌지 않았는지 봅니다", sub: "숫자·날짜·이름·문단" },
                 ].map((st) => {
                   const done = phase > st.n;
                   const now = phase === st.n;
@@ -1214,6 +1162,39 @@ export default function App() {
               </div>
             </section>
 
+            {/*
+              기계가 정할 수 없는 것은 정하지 않고 넘긴다.
+
+              이름을 그대로 둘지, 시제가 실제와 맞는지, 인용문이 실제 발언과 같은지 —
+              이건 원고를 쓴 사람만 안다. 억지로 고쳐 놓는 것보다 물어보는 편이 낫다.
+              접어 두면 안 보고 넘어가므로 펼친 채로 둔다.
+            */}
+            {confirms.length > 0 && (
+              <div className={`${CARD} p-5`}>
+                <h3 className="flex flex-wrap items-center gap-x-2 gap-y-1 text-base font-bold text-slate-900">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+                  작성자 확인 {confirms.length}건
+                  <span className="text-sm font-normal text-slate-500">
+                    기계가 정할 수 없어 그대로 두었습니다
+                  </span>
+                </h3>
+                <ul className="mt-3 space-y-3">
+                  {confirms.map((c, i) => (
+                    <li key={i} className="rounded-md border border-slate-200 p-3">
+                      <p className="text-sm font-bold text-slate-900">{c.about}</p>
+                      <p className="mt-1 text-sm text-slate-600">{c.why}</p>
+                      {c.suggest && (
+                        <p className="mt-1.5 text-sm text-slate-700">
+                          <span className="text-slate-500">이렇게도 됩니다 — </span>
+                          {c.suggest}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <details className="group">
               <summary className="cursor-pointer list-none rounded-lg border border-slate-200 bg-white px-5 py-3 font-bold text-slate-800 hover:border-blue-600">
                 <span className="mr-2 text-blue-700 group-open:hidden">＋</span>
@@ -1290,31 +1271,31 @@ export default function App() {
                   [
                     {
                       n: "1차",
-                      name: "규칙 검토",
+                      name: "규칙 대조",
                       done: true,
-                      say: `${result.findings.length}건`,
-                      sub: "용어 목록·표기 규범 대조",
+                      say: `${DATA_COUNTS.terms.toLocaleString()}개 대조`,
+                      sub: "AI 에게 넘길 근거를 모은다",
                     },
                     {
                       n: "2차",
-                      name: "AI 검토",
+                      name: "AI 고쳐 쓰기",
                       done: aiState === "done",
                       running: busy,
-                      say: aiState === "done" ? `${aiFindings.length}건` : "안 돌림",
-                      sub: "조사·호응·비문·군더더기",
+                      say: aiState === "done" ? `${aiFindings.length}곳` : "안 돌림",
+                      sub: "원고 전체를 문맥으로 고쳐 쓴다",
                     },
                     {
                       n: "3차",
-                      name: "재검토",
+                      name: "검사",
                       done: aiState === "done",
                       running: busy,
                       say:
                         aiState === "done"
                           ? verifyCount
-                            ? `${verifyCount}건 바로잡음`
-                            : "이상 없음"
+                            ? `${verifyCount}문단 물리침`
+                            : "사실 그대로"
                           : "안 돌림",
-                      sub: "고친 자리를 다시 확인",
+                      sub: "숫자·이름·문단이 바뀌지 않았는지",
                     },
                   ] as const
                 ).map((st) => (

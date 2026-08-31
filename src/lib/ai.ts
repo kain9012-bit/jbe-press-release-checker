@@ -648,3 +648,177 @@ export async function verifyEdits(
   const from = new Map(edits.map((e) => [e.id, e.from]));
   return guard3(parsed.wrong ?? [], from, {});
 }
+
+/* ------------------------------------------------------------------ */
+/* 다시 쓰기 — AI 가 원고 전체를 고쳐 쓴다                               */
+/* ------------------------------------------------------------------ */
+
+const REWRITE_SYSTEM = `당신은 대한민국 공공기관 보도자료를 국립국어원 공문서등 평가 기준으로
+고쳐 쓰는 국어 전문가다. 원고를 문단 번호와 함께 준다. **문단마다 고쳐 쓴 글을 낸다.**
+
+[무엇을 보는가]
+- 용이성 ① 외국 글자: 로마자·한자를 한글로 적고 필요하면 괄호에 병기한다. ‘AI’ → ‘인공지능(AI)’.
+- 용이성 ② 쉬운 우리말: 어려운 외래어·행정 용어를 쉬운 말로. 필요하면 병기한다.
+  ‘클라우드’ → ‘구름 망(클라우드)’.
+- 정확성 표기: 맞춤법·띄어쓰기·두음 법칙. **띄어쓰기를 반드시 본다.**
+  ‘새지평’ → ‘새 지평’, ‘문서학습기능’ → ‘문서 학습 기능’, ‘접수공문’ → ‘접수 공문’.
+- 정확성 표현: 조사·어미, 주술 호응, 시제, 번역 투.
+- 소통성: 군더더기, 지나치게 긴 문장, 권위적이거나 차별적인 표현.
+
+[절대로 바꾸지 않는 것 — 어기면 그 문단은 통째로 버려진다]
+- 숫자·날짜·비율·금액. 하나라도 달라지면 안 된다.
+- 「 」 안의 글. 기관이 정한 이름이다.
+- **이름.** 사업명·시스템명·제품명은 사실이다. ‘K뚝배기’, ‘K에듀파인’, ‘JB메신저’ 처럼
+  로마자가 한글에 붙어 한 낱말을 이루면 그것이 그 물건의 이름이다. 병기도 달지 마라 —
+  ‘케이(K)뚝배기’ 는 다른 물건 이름이 된다. 대신 confirm 에 올려 담당자가 정하게 하라.
+  이름이 아니라 표어·문구면(‘지평선 너머, 꿈 UP! 미래 UP!’) 고쳐도 된다.
+- 사람 이름·직위·기관명. 있는 그대로 둔다.
+- 문단을 합치거나 나누거나 없애지 마라. **준 문단 수 그대로 낸다.**
+- 없는 사실을 더하지 마라. 고쳐 쓰는 것이지 새로 쓰는 것이 아니다.
+
+[내는 것]
+- paragraphs: 문단마다 { i: 준 번호, text: 고쳐 쓴 글 }. 고칠 데가 없으면 원문 그대로.
+- changes: 고친 자리마다 { from, to, axis, item, why }. axis 는 용이성·정확성·소통성 중 하나,
+  item 은 ‘외국 글자’·‘쉬운 우리말’·‘띄어쓰기’ 처럼 짧은 이름, why 는 한 문장.
+- confirm: **사람이 정해야 할 것.** 이름을 그대로 둔 것, 시제가 실제와 맞는지, 인용문이
+  실제 발언과 같은지 같은 것. { about, why, suggest }.
+- summary: 두세 문장 총평.
+
+출력은 다른 말 없이 JSON 객체 하나만 낸다.`;
+
+const REWRITE_SCHEMA = {
+  type: 'object',
+  properties: {
+    paragraphs: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { i: { type: 'integer' }, text: { type: 'string' } },
+        required: ['i', 'text'],
+      },
+    },
+    changes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          from: { type: 'string' },
+          to: { type: 'string' },
+          axis: { type: 'string', enum: ['용이성', '정확성', '소통성'] },
+          item: { type: 'string' },
+          why: { type: 'string' },
+        },
+        required: ['from', 'to', 'axis', 'item', 'why'],
+      },
+    },
+    confirm: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          about: { type: 'string' },
+          why: { type: 'string' },
+          suggest: { type: 'string' },
+        },
+        required: ['about', 'why', 'suggest'],
+      },
+    },
+    summary: { type: 'string' },
+  },
+  required: ['paragraphs', 'changes', 'confirm', 'summary'],
+};
+
+export interface Change {
+  from: string;
+  to: string;
+  axis: string;
+  item: string;
+  why: string;
+}
+export interface Confirm {
+  about: string;
+  why: string;
+  suggest: string;
+}
+export interface RewriteResult {
+  paragraphs: string[];
+  changes: Change[];
+  confirm: Confirm[];
+  summary: string;
+}
+
+function rewriteUser(paras: string[], hints: string[]): string {
+  const numbered = paras.map((p, i) => `[${i}] ${p}`).join('\n');
+  return `[규칙 검사가 걸러 낸 표현 — 참고만 하고, 문맥에 맞지 않으면 따르지 마라]
+${hints.length ? hints.join(', ') : '(없음)'}
+
+[고쳐 쓸 원고 — 문단 ${paras.length}개]
+${numbered}`;
+}
+
+/**
+ * 원고 전체를 다시 쓰게 한다.
+ *
+ * 문단 번호를 붙여 주고 번호째로 돌려받는다. 번호가 빠지면 그 문단은 원문 그대로 둔다.
+ * 받은 글이 사실을 바꾸지 않았는지는 이 함수가 아니라 하네스(guardRewrite)가 본다.
+ */
+export async function rewriteDraft(
+  cfg: AiConfig,
+  paras: string[],
+  hints: string[] = [],
+): Promise<RewriteResult> {
+  const user = rewriteUser(paras, hints);
+  const raw =
+    cfg.provider === 'anthropic'
+      ? await callAnthropic(cfg, user, REWRITE_SYSTEM)
+      : cfg.provider === 'gemini' || cfg.provider === 'proxy'
+        ? await callGemini(cfg, user, REWRITE_SYSTEM, REWRITE_SCHEMA)
+        : await callOpenAI(cfg, user, REWRITE_SYSTEM);
+
+  const parsed = parseJson(raw);
+  const out = paras.slice();
+  for (const p of parsed.paragraphs ?? []) {
+    const i = Number(p?.i);
+    if (!Number.isInteger(i) || i < 0 || i >= paras.length) continue;
+    const t = String(p?.text ?? '').trim();
+    if (t) out[i] = t;
+  }
+  return {
+    paragraphs: out,
+    changes: (parsed.changes ?? []) as Change[],
+    confirm: (parsed.confirm ?? []) as Confirm[],
+    summary: String(parsed.summary ?? ''),
+  };
+}
+
+/**
+ * 하네스에 걸린 문단만 다시 묻는다.
+ *
+ * 통째로 다시 시키지 않는다. 잘 나온 문단까지 흔들 이유가 없다.
+ */
+export async function rewriteAgain(
+  cfg: AiConfig,
+  paras: string[],
+  indexes: number[],
+  reasons: string[],
+): Promise<Record<number, string>> {
+  if (indexes.length === 0) return {};
+  const body = indexes
+    .map((i, k) => `[${i}] (앞서 낸 답이 걸린 까닭: ${reasons[k]})\n${paras[i]}`)
+    .join('\n\n');
+  const raw =
+    cfg.provider === 'anthropic'
+      ? await callAnthropic(cfg, body, REWRITE_SYSTEM)
+      : cfg.provider === 'gemini' || cfg.provider === 'proxy'
+        ? await callGemini(cfg, body, REWRITE_SYSTEM, REWRITE_SCHEMA)
+        : await callOpenAI(cfg, body, REWRITE_SYSTEM);
+  const parsed = parseJson(raw);
+  const out: Record<number, string> = {};
+  for (const p of parsed.paragraphs ?? []) {
+    const i = Number(p?.i);
+    if (!indexes.includes(i)) continue;
+    const t = String(p?.text ?? '').trim();
+    if (t) out[i] = t;
+  }
+  return out;
+}
