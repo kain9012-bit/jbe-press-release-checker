@@ -54,26 +54,16 @@ async function onePass(text) {
     if (q.from !== undefined && q.key) edits.push({ id: q.key, from: q.from, to: q.text, after: q.text });
     at += q.text.length;
   }
-  // 3차는 잘못된 것을 끄는 게 아니라 옳은 말로 갈아 끼운다.
-  // 돌아온 말이 고치기 전과 같으면 손대지 말았어야 할 자리다 — 그때만 끈다.
+  // 3차는 끄거나 되돌리지 않는다. 더 나은 말로 갈아 끼울 뿐이다.
   const fixes = await verifyEdits(cfg, edits.slice(0, 60));
-  const from = new Map(edits.map((e) => [e.id, e.from]));
-  let reverted = 0;
-  for (const [k, fix] of Object.entries(fixes)) {
-    if (fix === from.get(k)) {
-      reverted++;
-      if (probe[k]) probe[k] = { ...probe[k], on: false };
-      continue;
-    }
+  for (const [k, fix] of Object.entries(fixes))
     probe[k] = { ...(probe[k] ?? { pick: 0 }), custom: fix, on: true };
-  }
 
   return {
     violations: ai.violations,
     keys: all.map((f) => `${f.start}:${f.text}`),
     revised: buildRevisedParts(text, all, probe).map((x) => x.text).join(''),
-    fixed: Object.keys(fixes).length - reverted,
-    reverted,
+    fixed: Object.keys(fixes).length,
   };
 }
 
@@ -86,7 +76,7 @@ for (const c of CASES) {
   for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) { sum += jaccard(runs[i].keys, runs[j].keys); pairs++; }
   console.log(`  ① 일관성 ${N}회 — 지적 묶음 겹침 ${pairs ? (sum / pairs * 100).toFixed(1) : 100}%`);
   console.log(`     수정본이 ${new Set(runs.map(r => r.revised)).size}가지 나옴 (1이면 완전히 같음)`);
-  console.log(`     검수가 바로잡은 것 ${runs.map(r => r.fixed).join(', ')}건 · 원래대로 둔 것 ${runs.map(r => r.reverted).join(', ')}건`);
+  console.log(`     검수가 바로잡은 것 ${runs.map(r => r.fixed).join(', ')}건`);
   const viol = {};
   for (const r of runs) for (const [k, v] of Object.entries(r.violations)) viol[k] = (viol[k] ?? 0) + v;
   console.log(`     모형이 규약을 어겨 버린 것 ${Object.entries(viol).map(([k, v]) => `${k} ${v}`).join(', ') || '없음'}`);

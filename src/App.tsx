@@ -443,7 +443,6 @@ export default function App() {
     let dec = defaultDecisions(r.findings);
     let ai: Finding[] = [];
     let summary = "";
-    let reverted = new Set<string>();
     let fixedByVerify = 0;
     let failed = "";
 
@@ -493,7 +492,6 @@ export default function App() {
         try {
           const res = await verifyOn(src, all, dec);
           dec = res.dec;
-          reverted = res.reverted;
           fixedByVerify = res.fixed;
         } catch {
           /* 검수가 실패해도 앞 단계 결과는 살린다 */
@@ -507,17 +505,15 @@ export default function App() {
     }
 
     /*
-     * 3차에서 잘못 고친 것은 이미 옳은 말로 갈아 끼웠다(verifyOn). 여기서 빼는 것은
-     * **애초에 손대지 말았어야 할 자리**뿐이다. 고칠 것이 없는 자리이니 지적으로 남길
-     * 이유가 없다. 어느 쪽이든 담당자 화면에는 설명이 붙지 않는다.
+     * 여기서 지적을 빼지 않는다.
      *
-     * 그러고 나면 목록에 남는 것은 전부 켜진 것이 된다. '모두 고치기' 를 누른 상태다.
+     * 한때는 3차가 걸러 낸 것을 목록에서 없앴다. 그랬더니 부제의 '꿈 UP! 미래 UP!' 처럼
+     * 규칙이 멀쩡히 잡아 낸 자리가 고쳐지지도 않고 보이지도 않게 됐다. 검수는 고른 말을
+     * 더 나은 말로 바꿀 뿐이다. 규범에 걸린 자리는 끝까지 목록에 남는다.
+     *
+     * 고칠 말이 있는 것은 전부 켠다. '모두 고치기' 를 누른 상태로 나온다.
      */
-    const rule = r.findings.filter((f) => !reverted.has(f.key));
-    ai = ai.filter((f) => !reverted.has(f.key));
-    const kept: AnalyzeResult = { ...r, findings: rule };
-
-    for (const f of [...rule, ...ai]) {
+    for (const f of [...r.findings, ...ai]) {
       const d = dec[f.key] ?? { on: false, pick: 0 };
       if (replacementFor(f, d, src) !== null) dec[f.key] = { ...d, on: true };
     }
@@ -527,7 +523,7 @@ export default function App() {
     setBody(split.본문);
     setBaseDoc(doc);
     setSource(src);
-    setResult(kept);
+    setResult(r);
     putDecisions(dec);
     setAiFindings(ai);
     setAiSummary(summary);
@@ -580,7 +576,7 @@ export default function App() {
     src: string,
     all: Finding[],
     dec: Record<string, Decision>,
-  ): Promise<{ dec: Record<string, Decision>; reverted: Set<string>; fixed: number }> {
+  ): Promise<{ dec: Record<string, Decision>; fixed: number }> {
     // 켜진 것만 보면 안 된다. 켜기 전에 걸러 두어야 나쁜 것이 딸려 들어가지 않는다.
     const probe: Record<string, Decision> = { ...dec };
     for (const f of all) {
@@ -602,27 +598,21 @@ export default function App() {
       }
       at += part.text.length;
     }
-    if (edits.length === 0) return { dec, reverted: new Set<string>(), fixed: 0 };
+    if (edits.length === 0) return { dec, fixed: 0 };
 
     /*
      * 검수는 트집이 아니라 고침이다.
      *
-     * 잘못 고친 자리마다 '그 자리에 들어갈 옳은 말' 이 돌아온다. 그것을 그대로 갈아 끼운다.
-     * 돌아온 말이 고치기 전과 같으면 애초에 손대지 말았어야 할 자리라는 뜻이니, 그 지적은
-     * 조용히 없앤다. 어느 쪽이든 담당자에게 설명을 떠넘기지 않는다.
+     * 잘못 고친 자리마다 '그 자리에 들어갈 더 나은 말' 이 돌아온다. 그것을 갈아 끼운다.
+     * 여기서 지적이 없어지는 일은 없다. 검수는 앞 단계가 고른 말을 더 나은 말로 바꿀 뿐,
+     * 규범에 걸린 자리를 없던 일로 만들 권한은 없다(guard3 가 되돌리기를 버린다).
      */
     const fixes = await verifyEdits(cfg, edits.slice(0, 60));
-    const before = new Map(edits.map((e) => [e.id, e.from]));
     const next = { ...dec };
-    const reverted = new Set<string>();
     for (const [k, fix] of Object.entries(fixes)) {
-      if (fix === before.get(k)) {
-        reverted.add(k);
-        continue;
-      }
       next[k] = { ...(next[k] ?? { on: false, pick: 0 }), custom: fix, on: true };
     }
-    return { dec: next, reverted, fixed: Object.keys(fixes).length - reverted.size };
+    return { dec: next, fixed: Object.keys(fixes).length };
   }
 
   /** 키를 넣으러 갔다가 돌아오면 하려던 검토를 잇는다 */
