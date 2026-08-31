@@ -165,8 +165,7 @@ export default function App() {
   const [copied, setCopied] = useState("");
   /** 수정본에서 고치기 전 말도 같이 보여 줄지 */
   const [showFrom, setShowFrom] = useState(false);
-  const [fillNote, setFillNote] = useState('');
-  /** 검수에서 걸린 자리 — key → 왜 잘못인지 */
+  /** 3차에서 되돌린 자리 — 세는 데만 쓴다. 그 자리는 목록에서 아예 뺀다. */
   const [verifyNotes, setVerifyNotes] = useState<Record<string, string>>({});
   /** 세 단계를 다 돌 때까지 켜 둔다. 그동안 화면에는 아무것도 안 올린다. */
   const [busy, setBusy] = useState(false);
@@ -397,7 +396,6 @@ export default function App() {
     setBody([]);
     setMeta(EMPTY_META);
     setFileNote(null);
-    setFillNote('');
     setDragOver(false);
     jumpToResult.current = false;
     setActive(null);
@@ -446,7 +444,6 @@ export default function App() {
     let ai: Finding[] = [];
     let summary = "";
     let notes: Record<string, string> = {};
-    let note = "";
     let failed = "";
 
     if (withAi) {
@@ -478,20 +475,13 @@ export default function App() {
                 before: wordBefore(src, f.start),
               })),
             );
-            let held = 0;
             for (const [key, rep] of Object.entries(fills)) {
               const d = dec[key] ?? { on: false, pick: 0 };
               const f = stuck.find((x) => x.key === key);
-              const risky = f ? tenseChanged(f.text, rep) : false;
-              if (risky) held += 1;
-              dec[key] = { ...d, custom: rep, on: !risky };
+              // 시제가 바뀐 것은 넣지 않는다. 3차가 또 볼 것도 없이 여기서 버린다.
+              if (f && tenseChanged(f.text, rep)) continue;
+              dec[key] = { ...d, custom: rep, on: true };
             }
-            const n = Object.keys(fills).length;
-            if (n)
-              note =
-                `규칙이 정하지 못한 ${n}곳도 AI가 채웠습니다.` +
-                (held ? ` 그중 ${held}곳은 시제가 바뀌어 꺼 두었습니다.` : "") +
-                " 확인해 주세요.";
           } catch {
             /* 채우기가 실패해도 검토 결과는 살린다 */
           }
@@ -503,8 +493,6 @@ export default function App() {
           const res = await verifyOn(src, all, dec);
           dec = res.dec;
           notes = res.notes;
-          const n = Object.keys(notes).length;
-          if (n) note = (note ? note + " " : "") + `검수에서 ${n}곳이 걸려 꺼 두었습니다.`;
         } catch {
           /* 검수가 실패해도 앞 단계 결과는 살린다 */
         }
@@ -516,17 +504,23 @@ export default function App() {
       }
     }
 
-    // 고칠 수 있는 자리는 다 켜 둔 채로 보여 준다.
-    // 담당자가 바라는 것은 '고쳐진 글' 이지 '고칠 목록' 이 아니다. 되돌리고 싶으면
-    // 접힌 칸에서 '모두 되돌리기' 를 누르거나 하나씩 끄면 된다.
-    {
-      const all = [...r.findings, ...ai];
-      for (const f of all) {
-        const d = dec[f.key] ?? { on: false, pick: 0 };
-        // 검수에서 걸린 것은 그대로 꺼 둔다. 그건 켜면 안 되는 것이다.
-        if (notes[f.key]) continue;
-        if (replacementFor(f, d, src) !== null) dec[f.key] = { ...d, on: true };
-      }
+    /*
+     * 3차에서 걸린 것은 꺼 두지 않고 **아예 뺀다.**
+     *
+     * 꺼 두면 담당자 화면에 '왜 꺼져 있는지 읽고 판단할 것' 이 남는다. 그런데 그건
+     * 우리가 잘못 고치려다 스스로 걸러 낸 것이지 원고의 문제가 아니다. 숙제로 넘길
+     * 일이 아니라 없던 일로 하는 것이 맞다.
+     *
+     * 그러고 나면 목록에 남는 것은 전부 켜진 것이 된다. '모두 고치기' 를 누른 상태다.
+     */
+    const dropped = new Set(Object.keys(notes));
+    const rule = r.findings.filter((f) => !dropped.has(f.key));
+    ai = ai.filter((f) => !dropped.has(f.key));
+    const kept: AnalyzeResult = { ...r, findings: rule };
+
+    for (const f of [...rule, ...ai]) {
+      const d = dec[f.key] ?? { on: false, pick: 0 };
+      if (replacementFor(f, d, src) !== null) dec[f.key] = { ...d, on: true };
     }
 
     // 여기서 한 번에 화면에 올린다
@@ -534,12 +528,11 @@ export default function App() {
     setBody(split.본문);
     setBaseDoc(doc);
     setSource(src);
-    setResult(r);
+    setResult(kept);
     putDecisions(dec);
     setAiFindings(ai);
     setAiSummary(summary);
     setVerifyNotes(notes);
-    setFillNote(note);
     setAiError(failed);
     setAiState(!withAi ? "idle" : failed ? "fail" : "done");
     setActive(null);
@@ -1120,12 +1113,6 @@ export default function App() {
               )}
 
               <div className={`${CARD} p-5`}>
-                {fillNote && (
-                  <p className="mb-3 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-slate-800">
-                    {fillNote}
-                  </p>
-                )}
-
                 {fixedCount === 0 && (
                   <p className="mb-3 text-sm text-slate-600">
                     아직 고친 곳이 없습니다. 위 지적에서 하나씩 켜거나 <b>모두 고치기</b>를 누르세요.
@@ -1145,7 +1132,11 @@ export default function App() {
                           </span>
                         )}
                         {showFrom && ' '}
-                        <span className="rounded bg-green-50 px-1 font-bold text-green-700">
+                        {/*
+                          좌우 여백(px-1)을 주면 안 된다. 원문에는 없는 띄어쓰기가 있는 것처럼
+                          보여서 ‘공연 으로’ 로 읽힌다. 자리는 색과 밑줄로만 표시한다.
+                        */}
+                        <span className="bg-green-100 font-bold text-green-800 underline decoration-green-600 decoration-2 underline-offset-2">
                           {part.text}
                         </span>
                       </span>
@@ -1498,15 +1489,6 @@ export default function App() {
                             대안이 지시문이거나 앞말에 따라 달라지는 경우에는 기계가 고를 수
                             없다. 그럴 때는 손으로 적어 넣게 하고, 적으면 그것을 수정본에 쓴다.
                           */}
-                            {verifyNotes[f.key] && (
-                              <p className="mt-3 flex gap-1.5 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
-                                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                                <span>
-                                  <b>검수에서 걸렸습니다</b> — {verifyNotes[f.key]} 그래서 꺼 두었습니다.
-                                </span>
-                              </p>
-                            )}
-
                             {!can && (
                               <div className="mt-3">
                                 <label

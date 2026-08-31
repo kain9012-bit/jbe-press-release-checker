@@ -14,8 +14,15 @@ const TONE: Record<string, string> = {
  * 그 테가 눈에 안 띄었다. 축 색깔(파랑·빨강·노랑)과 겹치지 않는 검정으로 뒤집으면
  * 목록에서 눌러 굴러왔을 때 어디를 봐야 하는지 한눈에 들어온다.
  */
-const ACTIVE =
-  'bg-slate-900 text-white font-bold ring-2 ring-slate-900 ring-offset-2 rounded';
+const ACTIVE = 'bg-slate-900 text-white font-bold rounded-sm';
+
+/**
+ * 칠한 자리에 좌우 여백(px-*)을 주면 안 된다.
+ *
+ * 여백은 글자 사이를 벌려서 원문에 없는 띄어쓰기가 있는 것처럼 보이게 한다.
+ * ‘공연으로’ 가 ‘공연 으로’ 로 읽히고, 내려받은 hwpx 와 화면이 달라 보인다.
+ * 자리는 바탕색으로만 표시한다.
+ */
 
 interface Props {
   text: string;
@@ -46,7 +53,7 @@ export default function Highlight({ text, findings, activeKey, onPick, markRefs 
         onClick={() => onPick(f.key)}
         title={`${f.axis} · ${f.sub}`}
         className={`${active ? ACTIVE : (TONE[f.axis] ?? 'bg-slate-100')}
-          cursor-pointer scroll-mt-28 rounded-sm px-[1px] text-left transition-colors`}
+          cursor-pointer scroll-mt-28 rounded-sm text-left align-baseline transition-colors`}
       >
         {text.slice(f.start, f.end)}
       </button>,
