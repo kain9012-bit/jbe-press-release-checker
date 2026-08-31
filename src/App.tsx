@@ -1225,6 +1225,23 @@ export default function App() {
                               >
                                 {f.severity}
                               </Badge>
+                              {/*
+                                표가 몇인지가 곧 그 지적이 얼마나 확실한지다.
+                                세 번 다 짚었으면 누가 봐도 오류이고, 한두 번만
+                                짚었으면 사람마다 갈리는 자리다. 답이 달라지는 것을
+                                숨기지 말고 그대로 등급으로 보여 준다.
+                              */}
+                              {(() => {
+                                const v = f.src.match(/(\d+)회 중 (\d+)회/);
+                                if (!v) return null;
+                                const [all, got] = [Number(v[1]), Number(v[2])];
+                                const sure = got >= all;
+                                return (
+                                  <Badge tone={sure ? "blue" : "slate"}>
+                                    {sure ? "확실" : "갈릴 수 있음"} {got}/{all}
+                                  </Badge>
+                                );
+                              })()}
                             </div>
                             <p className="mt-2 text-xs text-slate-500">
                               {f.sub}
