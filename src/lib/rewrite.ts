@@ -14,6 +14,8 @@
  * 검사관이 보는 것
  *   guardRewrite  — 문단 수 · 숫자와 날짜 · 「 」 안의 이름 · 문단 길이.
  *                   어긋난 문단은 받지 않고 원문 그대로 둔다.
+ *   fixByunggiJosa — ‘인공지능(AI)가’ 처럼 병기 뒤 조사가 틀린 것을 바로잡는다.
+ *                   판단이 아니라 계산이라 코드가 맞추는 편이 옳다.
  *   onlyGrounded  — **어느 기준에 걸려서 고쳤는지 대지 못한 자리는 되돌린다.**
  *                   검증 도구가 근거 없이 남의 글을 고치면 그건 검증이 아니다.
  */
@@ -78,7 +80,8 @@ export function guardRewrite(source: string[], rewritten: string[]): GuardReport
       rejected.push({ index: i, why });
       kept.push(from);
     } else {
-      kept.push(rewritten[i].trim());
+      // 병기 뒤 조사는 계산으로 정해진다. 모형이 흔들려도 여기서 맞춘다.
+      kept.push(fixByunggiJosa(rewritten[i].trim()));
     }
   });
   return { kept, rejected };
@@ -274,4 +277,52 @@ export function onlyGrounded(segs: Segment[], grounds: Grounds[]): Segment[] {
   return segs.filter((sg) =>
     grounds.some((g) => has(sg.from, g.from) && has(sg.to, g.to)),
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* 4. 병기 뒤 조사는 기계가 바로잡는다                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * ‘인공지능(AI)가’ 처럼 병기 뒤에 잘못 붙은 조사를 바로잡는다.
+ *
+ * 배포본에서 같은 원고를 두 번 돌려 봤더니 한 번은 ‘인공지능(AI)이’, 한 번은
+ * ‘인공지능(AI)가’ 가 나왔다. 괄호 때문에 앞말 받침이 헷갈리는 자리라 모형이
+ * 부를 때마다 흔들린다.
+ *
+ * 그런데 이건 **판단이 아니라 계산이다.** 괄호 안은 읽지 않으므로 ‘인공지능’ 의
+ * 끝 글자 ‘능’ 에 받침이 있는지만 보면 답이 하나로 정해진다. 판단은 AI 에게 맡기되,
+ * 계산으로 정해지는 것은 코드가 맞춘다. 그래야 몇 번을 돌려도 여기서는 안 흔들린다.
+ *
+ * 괄호 뒤 조사만 본다. 여느 자리의 조사까지 손대면 입말·고유명사를 건드릴 수 있다.
+ * 괄호 안에 무엇이 들었든(로마자든 한글이든) 읽지 않는 것은 마찬가지라 똑같이 다룬다.
+ */
+const BYUNGGI_JOSA =
+  /([가-힣])\(([^()]{1,40})\)(으로|로|을|를|이|가|은|는|과|와)(?=[\s,.·…”’)\]]|$)/g;
+
+const JOSA_PAIR: Record<string, [string, string]> = {
+  으로: ['으로', '로'],
+  로: ['으로', '로'],
+  을: ['을', '를'],
+  를: ['을', '를'],
+  이: ['이', '가'],
+  가: ['이', '가'],
+  은: ['은', '는'],
+  는: ['은', '는'],
+  과: ['과', '와'],
+  와: ['과', '와'],
+};
+
+const batchimOf = (ch: string) => (ch.charCodeAt(0) - 0xac00) % 28;
+
+export function fixByunggiJosa(text: string): string {
+  return text.replace(BYUNGGI_JOSA, (whole, ch: string, inside: string, josa: string) => {
+    const jong = batchimOf(ch);
+    const pair = JOSA_PAIR[josa];
+    if (!pair) return whole;
+    // ‘으로/로’ 만 ㄹ 받침(종성 8)을 받침 없음처럼 다룬다
+    const hasB = pair[0] === '으로' ? jong !== 0 && jong !== 8 : jong !== 0;
+    const right = hasB ? pair[0] : pair[1];
+    return `${ch}(${inside})${right}`;
+  });
 }

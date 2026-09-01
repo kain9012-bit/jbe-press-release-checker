@@ -7,7 +7,7 @@
  *
  * 그리고 화면에 칠할 자리는 AI 가 말한 것을 믿지 않고 두 글을 견주어 코드가 찾는다.
  */
-import { checkParagraph, guardRewrite, diffSegments, diffAll, onlyGrounded } from './lib.mjs';
+import { checkParagraph, guardRewrite, diffSegments, diffAll, onlyGrounded, fixByunggiJosa } from './lib.mjs';
 
 let bad = 0;
 const check = (name, got, want) => {
@@ -93,6 +93,28 @@ check('근거 없는 고침은 빠짐', kept.some((g) => g.from === '마련했�
 check('내역이 자리를 품고 있어도 같은 것으로 본다',
   onlyGrounded([{ start: 0, end: 5, from: '접수공문 AI', to: '접수 공문 인공지능(AI)' }],
     [{ from: 'AI', to: '인공지능(AI)' }]).length, 1);
+
+console.log('\n병기 뒤 조사는 계산이라 코드가 맞춘다');
+// 배포본에서 같은 원고를 두 번 돌렸더니 한 번은 '이', 한 번은 '가' 가 나왔다.
+check('인공지능(AI)가 → 인공지능(AI)이',
+  fixByunggiJosa('한국어 특화 인공지능(AI)가 적용된 체계'), '한국어 특화 인공지능(AI)이 적용된 체계');
+check('이미 맞으면 그대로', fixByunggiJosa('인공지능(AI)이 척척'), '인공지능(AI)이 척척');
+check('받침 없는 앞말은 가 (‘차’)',
+  fixByunggiJosa('전기차(EV)이 늘었다'), '전기차(EV)가 늘었다');
+check('받침 있는 앞말은 이 (‘실’)',
+  fixByunggiJosa('가상현실(VR)가 놀랍다'), '가상현실(VR)이 놀랍다');
+check('을/를도 맞춘다',
+  fixByunggiJosa('인공지능(AI)를 활용해'), '인공지능(AI)을 활용해');
+// ‘으로/로’ 만 ㄹ 받침을 받침 없음처럼 다룬다
+check('ㄹ 받침은 로 (‘실’)',
+  fixByunggiJosa('가상현실(VR)으로 배운다'), '가상현실(VR)로 배운다');
+check('ㄹ 아닌 받침은 으로 (‘망’)',
+  fixByunggiJosa('구름 망(클라우드)로 옮겼다'), '구름 망(클라우드)으로 옮겼다');
+check('병기가 아닌 자리는 안 건드린다',
+  fixByunggiJosa('학생들이 참여했다'), '학생들이 참여했다');
+check('검사관이 받아 줄 때 같이 고친다',
+  guardRewrite(['한국어 특화 AI가 적용된 체계'], ['한국어 특화 인공지능(AI)가 적용된 체계']).kept[0],
+  '한국어 특화 인공지능(AI)이 적용된 체계');
 
 console.log('\n문단이 여럿이면 원고 전체 자리로 옮긴다');
 const all = diffAll(['AI 교육', '새지평 열다'], ['인공지능(AI) 교육', '새 지평 열다'], '\n');
