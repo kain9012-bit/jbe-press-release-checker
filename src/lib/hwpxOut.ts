@@ -18,19 +18,18 @@ const PH_SUBTITLE = '부제목(HY헤드라인 14포인트)';
 const PH_DIST = '배포일: 2026. 7. 6. (월)';
 const PH_EMBARGO = '보도시점: 배포 즉시 가능';
 const PH_MEDIA = ' 사진(0) 영상(0)';
-const PH_DEPT = '000000과';
+
 /**
- * 문의 표의 세 칸.
- *   ph      — 양식에 들어 있는 직위 자리표시
- *   label   — 실제로 찍을 직위 (양식은 ‘장학사’ 지만 쓰는 이름은 ‘담당자’ 다)
- *   namePh  — 이름 자리표시
+ * 문의 표는 자리로 채운다.
+ *
+ * 전에는 양식에 박아 둔 ‘과장’·‘담당’·‘장학사’ 라는 글자를 찾아 갈아 끼웠다. 그래서
+ * 원본의 직위가 무엇이냐를 코드가 알아야 했고, ‘선임’·‘주임’ 처럼 모르는 말이 나오면
+ * 그 사람이 통째로 사라졌다. 이제는 원본 표의 (줄, 열) 을 그대로 양식의 (줄, 열) 에
+ * 옮긴다. 무슨 말이 적혀 있는지 볼 일이 없다.
  */
-const PEOPLE_PH: { ph: string; label: string; namePh: string }[] = [
-  { ph: '과장', label: '과장', namePh: '김xx' },
-  { ph: '담당', label: '담당', namePh: '이xx' },
-  { ph: '장학사', label: '담당자', namePh: '박xx' },
-];
-const PH_TEL = '063-239-3xxx';
+/** 양식 문의 표에서 사람 칸이 시작하는 열 (0=라벨, 1=부서, 2·3·4=직위·이름·전화) */
+const PEOPLE_COL0 = 2;
+const DEPT_COL = 1;
 
 const BODY_PARA_ATTR = 'paraPrIDRef="38"';
 const SUB_PARA_ATTR = 'paraPrIDRef="40"';
@@ -45,12 +44,15 @@ export interface ReleaseMeta {
   제목: string;
   부제: string[];
   부서: string;
-  과장: string;
-  담당: string;
-  담당자: string;
-  /** 원본 문의 표에 적혀 있던 직위 글자 (과장·담당·담당자 칸 순서). 비면 양식 이름을 쓴다. */
-  직위?: string[];
+  /** 문의 표를 자리 그대로. 줄마다 [직위, 이름, 전화] — 적혀 있던 글자 그대로 쓴다. */
+  문의: string[][];
 }
+
+/** 양식 문의 표의 줄 수 */
+export const 문의줄 = 3;
+/** 빈 문의 표 (줄 수는 양식에 맞춘다) */
+export const emptyContacts = (): string[][] =>
+  Array.from({ length: 문의줄 }, () => ['', '', '']);
 
 export const EMPTY_META: ReleaseMeta = {
   배포일: '',
@@ -60,10 +62,7 @@ export const EMPTY_META: ReleaseMeta = {
   제목: '',
   부제: [],
   부서: '',
-  과장: '',
-  담당: '',
-  담당자: '',
-  직위: [],
+  문의: emptyContacts(),
 };
 
 /* ------------------------------------------------------------------ */
@@ -73,13 +72,87 @@ const xmlEscape = (s: string) =>
 
 const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-export function splitPerson(value: string): [string, string] {
-  if (!value) return ['', ''];
-  const parts = value.split(/\s*[|｜/,]\s*/);
-  if (parts.length >= 2) return [parts[0].trim(), parts.slice(1).join(' ').trim()];
-  const m = /(0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4})/.exec(value);
-  if (m) return [value.slice(0, m.index).trim(), m[1].trim()];
-  return [value.trim(), ''];
+/* --- 표 칸을 자리로 찾아 채우는 부분 -------------------------------- */
+
+/** 여는 표 태그의 자리부터 짝이 맞는 </hp:tbl> 까지 */
+function tableSpan(xml: string, from: number): { start: number; end: number } | null {
+  const open = xml.indexOf('<hp:tbl', from);
+  if (open < 0) return null;
+  const re = /<hp:tbl\b|<\/hp:tbl>/g;
+  re.lastIndex = open;
+  let depth = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml))) {
+    depth += m[0] === '</hp:tbl>' ? -1 : 1;
+    if (depth === 0) return { start: open, end: m.index + m[0].length };
+  }
+  return null;
+}
+
+/** ‘담당 부서’ 가 적힌 표를 찾는다. 자리표시 글자가 아니라 표 자체를 찾는 것이다. */
+function findContactTable(xml: string): { start: number; end: number } {
+  let at = 0;
+  for (;;) {
+    const span = tableSpan(xml, at);
+    if (!span) throw new TemplateError('양식에서 문의 표를 찾지 못했습니다.');
+    const inner = xml.slice(span.start, span.end);
+    if (/담\s*당[\s\S]{0,40}?부\s*서/.test(inner.replace(/<[^>]+>/g, ''))) return span;
+    at = span.end;
+  }
+}
+
+/** 칸 하나의 글을 갈아 끼운다. 첫 <hp:t> 에 넣고 나머지 <hp:t> 는 비운다. */
+function setCellText(cell: string, text: string): string {
+  const body = `<hp:t>${xmlEscape(text)}</hp:t>`;
+  let first = true;
+  if (!/<hp:t>/.test(cell)) {
+    return cell.replace(/(<hp:run\b[^>]*)\/>/, `$1>${body}</hp:run>`);
+  }
+  return cell.replace(/<hp:t>[\s\S]*?<\/hp:t>/g, () => {
+    if (first) {
+      first = false;
+      return body;
+    }
+    return '<hp:t></hp:t>';
+  });
+}
+
+/**
+ * 표 안의 칸을 자리(열·줄)로 찾아 채운다.
+ * put 이 null 을 주면 그 칸은 손대지 않는다.
+ */
+function fillCells(
+  xml: string,
+  span: { start: number; end: number },
+  put: (col: number, row: number) => string | null,
+): string {
+  const table = xml.slice(span.start, span.end);
+  const re = /<hp:tc\b|<\/hp:tc>/g;
+  const out: string[] = [];
+  let at = 0;
+  let m: RegExpExecArray | null;
+  let depth = 0;
+  let cellStart = -1;
+  while ((m = re.exec(table))) {
+    if (m[0] === '</hp:tc>') {
+      depth -= 1;
+      if (depth !== 0) continue;
+      const cell = table.slice(cellStart, m.index + m[0].length);
+      // 칸 안에 또 표가 있으면 그 안쪽 칸 주소는 우리 것이 아니다
+      const addr = /<hp:cellAddr\b[^>]*\/?>/.exec(cell);
+      const col = Number(/colAddr="(\d+)"/.exec(addr?.[0] ?? '')?.[1] ?? NaN);
+      const row = Number(/rowAddr="(\d+)"/.exec(addr?.[0] ?? '')?.[1] ?? NaN);
+      const text = Number.isFinite(col) && Number.isFinite(row) ? put(col, row) : null;
+      out.push(table.slice(at, cellStart));
+      out.push(text === null ? cell : setCellText(cell, text));
+      at = m.index + m[0].length;
+      continue;
+    }
+    if (depth === 0) cellStart = m.index;
+    depth += 1;
+  }
+  out.push(table.slice(at));
+  return xml.slice(0, span.start) + out.join('') + xml.slice(span.end);
 }
 
 export function formatDistDate(value: string): string {
@@ -154,19 +227,15 @@ function fillSection(xml: string, meta: ReleaseMeta, body: string[]): string {
   xml = replaceT(xml, PH_EMBARGO, `보도시점: ${meta.보도시점 || '배포 즉시 가능'}`);
   xml = replaceT(xml, PH_MEDIA, ` 사진(${meta.사진 || '0'}) 영상(${meta.영상 || '0'})`);
 
-  xml = replaceT(xml, PH_DEPT, meta.부서);
-
-  const raws = [meta.과장, meta.담당, meta.담당자];
-  PEOPLE_PH.forEach(({ ph, label, namePh }, i) => {
-    const [name, tel] = splitPerson(raws[i]);
-    xml = replaceT(xml, namePh, name);
-    // 전화번호 칸 세 개를 순서대로 하나씩 채운다
-    xml = xml.replace(`<hp:t>${PH_TEL}</hp:t>`, `<hp:t>${xmlEscape(tel)}</hp:t>`);
-    // 원본에 적혀 있던 직위가 있으면 그것을 쓴다. ‘전산행정담당’ 을 ‘담당’ 으로
-    // 덮어쓰면 고쳐 달라고 한 적 없는 사실이 바뀐다.
-    const shown = meta.직위?.[i]?.trim() || label;
-    // 사람이 없으면 직위 칸도 비운다
-    xml = replaceT(xml, ph, name || tel ? shown : '');
+  /*
+   * 문의 표: 원본의 (줄, 열) 을 양식의 (줄, 열) 에 그대로 옮긴다.
+   * 사람이 없는 줄은 세 칸을 다 비운다 — 양식의 ‘김xx’ 가 남아 나가면 안 된다.
+   */
+  const 문의 = meta.문의 ?? [];
+  xml = fillCells(xml, findContactTable(xml), (col, row) => {
+    if (col === DEPT_COL) return meta.부서;
+    if (col < PEOPLE_COL0) return null;
+    return (문의[row]?.[col - PEOPLE_COL0] ?? '').trim();
   });
 
   xml = replaceT(xml, PH_TITLE, meta.제목);

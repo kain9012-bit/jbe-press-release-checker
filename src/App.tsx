@@ -62,8 +62,24 @@ import {
   buildHwpx,
   defaultFileName,
   EMPTY_META,
+  emptyContacts,
+  문의줄,
   type ReleaseMeta,
 } from "./lib/hwpxOut";
+
+/**
+ * 원본 문의 표를 양식 줄 수에 맞춘다.
+ *
+ * 양식은 세 줄이다. 원본이 더 적으면 남는 줄은 비우고, 더 많으면 앞에서부터 채운다.
+ * 자르기 전에 사람 수가 줄었다는 것은 폼에서 눈에 보인다.
+ */
+function padContacts(rows: string[][]): string[][] {
+  const out = emptyContacts();
+  rows.slice(0, 문의줄).forEach((row, i) => {
+    out[i] = [row[0] ?? "", row[1] ?? "", row[2] ?? ""];
+  });
+  return out;
+}
 import {
   composeSource,
   decompose,
@@ -358,10 +374,7 @@ export default function App() {
     사진: m.사진,
     영상: m.영상,
     부서: m.부서,
-    과장: m.과장,
-    담당: m.담당,
-    담당자: m.담당자,
-    직위: m.직위,
+    문의: m.문의,
   });
 
   /** 수정본을 제목·부제·본문으로 되돌린 것 */
@@ -396,12 +409,9 @@ export default function App() {
         제목: r.제목,
         부제: r.부제,
         부서: r.부서 || m.부서,
-        과장: r.과장 || m.과장,
-        담당: r.담당 || m.담당,
-        담당자: r.담당자 || m.담당자,
-        // 표에 적혀 있던 직위 글자 그대로(‘전산행정담당’·‘주무관’). 양식 이름으로
-        // 덮어쓰면 고쳐 달라고 한 적 없는 사실이 바뀐다.
-        직위: r.직위,
+        // 문의 표는 자리 그대로 옮긴다. 직위가 무엇인지 코드가 알 필요가 없고,
+        // 적혀 있던 글자가 바뀌지도 않는다.
+        문의: r.문의.length ? padContacts(r.문의) : m.문의,
       }));
       // 상자에는 제목과 본문만 넣는다. 부제·머리말은 따로 들고 있다가
       // hwpx 를 만들 때 되돌려 놓는다 (상자에 같이 넣으면 전부 본문으로 잡힌다).

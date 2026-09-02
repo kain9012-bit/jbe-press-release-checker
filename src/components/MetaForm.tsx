@@ -13,8 +13,20 @@ const I =
 const TA =
   'w-full px-3 py-2 rounded-md border border-slate-300 bg-white text-sm font-semibold text-slate-800 outline-none focus:border-blue-600';
 
+const CONTACT_COLS: [string, string][] = [
+  ['직위', '과장'],
+  ['이름', '김○○'],
+  ['전화', '063-239-3000'],
+];
+
 export default function MetaForm({ value, onChange, lockTitle }: Props) {
   const set = (k: keyof ReleaseMeta, v: string | string[]) => onChange({ ...value, [k]: v });
+  const setCell = (row: number, col: number, v: string) => {
+    const 문의 = value.문의.map((r, i) =>
+      i === row ? r.map((c, j) => (j === col ? v : c)) : r,
+    );
+    onChange({ ...value, 문의 });
+  };
 
   return (
     <div className="space-y-4">
@@ -111,26 +123,31 @@ export default function MetaForm({ value, onChange, lockTitle }: Props) {
             placeholder="중등교육과"
           />
         </div>
-        {(
-          [
-            ['과장', '김○○ | 063-239-3000'],
-            ['담당', '이○○ | 063-239-3001'],
-            ['담당자', '박○○ | 063-239-3002'],
-          ] as const
-        ).map(([k, ph]) => (
-          <div key={k}>
-            <label className={L} htmlFor={`m-${k}`}>
-              {k} <span className="font-normal text-slate-500">이름 | 전화</span>
-            </label>
-            <input
-              id={`m-${k}`}
-              className={I}
-              value={value[k]}
-              onChange={(e) => set(k, e.target.value)}
-              placeholder={ph}
-            />
-          </div>
-        ))}
+      </div>
+
+      {/*
+        문의 표는 원본 표의 자리 그대로다. 직위 칸도 손으로 고칠 수 있게 열어 둔다 —
+        부서마다 ‘전산행정담당’·‘학부모지원팀 선임’ 처럼 쓰는 말이 다르고, 그것을
+        코드가 맞히려 들면 모르는 말이 나올 때마다 사람이 사라진다.
+      */}
+      <div>
+        <div className={L}>문의 표</div>
+        <div className="space-y-2">
+          {value.문의.map((row, i) => (
+            <div key={i} className="grid gap-2 sm:grid-cols-3">
+              {CONTACT_COLS.map(([label, ph], c) => (
+                <input
+                  key={c}
+                  className={I}
+                  aria-label={`${i + 1}번째 줄 ${label}`}
+                  value={row[c] ?? ''}
+                  onChange={(e) => setCell(i, c, e.target.value)}
+                  placeholder={ph}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

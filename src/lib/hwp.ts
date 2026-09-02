@@ -327,6 +327,129 @@ function collectPara(root: Element, out: string[]): void {
   flush();
 }
 
+/* ------------------------------------------------------------------
+   표를 표로 읽는다
+
+   문의 표는 직위·이름·전화가 칸마다 놓인 표다. 그것을 문단 목록으로 납작하게
+   펴 놓고 ‘어느 줄이 직위인가’ 를 낱말로 맞히려 하니, 부서마다 다른 ‘선임’·‘주임’
+   같은 말이 나올 때마다 목록을 늘려야 했다. 목록으로는 끝이 안 난다.
+
+   칸의 자리(cellAddr 의 열·줄)는 파일에 그대로 적혀 있다. 자리를 그대로 읽어
+   자리에 그대로 넣으면 무슨 말이 적혀 있든 상관이 없다.
+   ------------------------------------------------------------------ */
+
+export interface TableCell {
+  row: number;
+  col: number;
+  rowSpan: number;
+  colSpan: number;
+  text: string;
+}
+export interface Table {
+  rows: number;
+  cols: number;
+  cells: TableCell[];
+}
+
+const num = (el: Element | null, name: string, dflt: number): number => {
+  const v = el?.getAttribute(name);
+  const n = v === null || v === undefined ? NaN : Number(v);
+  return Number.isFinite(n) ? n : dflt;
+};
+
+/** hp:tc 하나의 글 (칸 안 문단이 여럿이면 이어 붙인다) */
+function cellText(tc: Element): string {
+  let s = '';
+  for (const t of Array.from(tc.getElementsByTagNameNS(HP_NS, 't'))) s += t.textContent ?? '';
+  return squash(s);
+}
+
+function readTable(tbl: Element): Table {
+  const cells: TableCell[] = [];
+  for (const tc of Array.from(tbl.getElementsByTagNameNS(HP_NS, 'tc'))) {
+    // 표 안에 표가 있으면 안쪽 칸은 그 표가 챙긴다
+    let owner: Node | null = tc.parentNode;
+    while (owner && !(owner.nodeType === 1 && (owner as Element).localName === 'tbl')) {
+      owner = owner.parentNode;
+    }
+    if (owner !== tbl) continue;
+    const addr = tc.getElementsByTagNameNS(HP_NS, 'cellAddr')[0] ?? null;
+    const span = tc.getElementsByTagNameNS(HP_NS, 'cellSpan')[0] ?? null;
+    cells.push({
+      row: num(addr, 'rowAddr', 0),
+      col: num(addr, 'colAddr', 0),
+      rowSpan: num(span, 'rowSpan', 1),
+      colSpan: num(span, 'colSpan', 1),
+      text: cellText(tc),
+    });
+  }
+  return { rows: num(tbl, 'rowCnt', 0), cols: num(tbl, 'colCnt', 0), cells };
+}
+
+/** 문의 표에서 읽어 낸 것 — 적혀 있던 글자 그대로다 */
+export interface ContactTable {
+  부서: string;
+  /** 줄마다 왼쪽부터 [직위, 이름, 전화]. 칸 수는 표가 정한다. */
+  사람: string[][];
+}
+
+const DEPT_LABEL_RE = /담\s*당\s*부\s*서/;
+
+/**
+ * ‘담당 부서’ 라고 적힌 표를 찾아 자리 그대로 읽는다.
+ *
+ * 라벨 칸 오른쪽에서 표 높이만큼 늘어난 칸이 부서다(전북 서식은 세 줄을 합쳐 쓴다).
+ * 그보다 오른쪽 칸들이 사람 칸이고, 줄마다 왼쪽부터 담아 낸다.
+ */
+export function contactTableOf(tables: Table[]): ContactTable | null {
+  for (const t of tables) {
+    const label = t.cells.find((c) => DEPT_LABEL_RE.test(c.text));
+    if (!label) continue;
+    const right = t.cells.filter((c) => c.col > label.col);
+    const full = right.filter((c) => c.rowSpan >= Math.max(1, t.rows)).sort((a, b) => a.col - b.col);
+    const dept = full.length ? full[full.length - 1] : null;
+    const cut = dept ? dept.col : label.col;
+    const byRow = new Map<number, TableCell[]>();
+    for (const c of right) {
+      if (c.col <= cut) continue;
+      const list = byRow.get(c.row);
+      if (list) list.push(c);
+      else byRow.set(c.row, [c]);
+    }
+    const 사람 = [...byRow.keys()]
+      .sort((a, b) => a - b)
+      .map((r) => byRow.get(r)!.sort((a, b) => a.col - b.col).map((c) => c.text));
+    return { 부서: dept?.text ?? '', 사람 };
+  }
+  return null;
+}
+
+function hwpxDocs(data: Uint8Array): Document[] {
+  const files = unzipSync(data);
+  const names = Object.keys(files)
+    .filter((n) => /^Contents\/section\d+\.xml$/.test(n))
+    .sort((a, b) => Number(a.match(/(\d+)\.xml$/)![1]) - Number(b.match(/(\d+)\.xml$/)![1]));
+  if (names.length === 0) throw new HwpError('hwpx 안에 Contents/section*.xml 이 없습니다.');
+  const dec = new TextDecoder('utf-8');
+  const parser = new DOMParser();
+  return names.map((n) => {
+    const doc = parser.parseFromString(dec.decode(files[n]), 'application/xml');
+    if (doc.getElementsByTagName('parsererror').length) {
+      throw new HwpError(`${n} 를 읽지 못했습니다.`);
+    }
+    return doc;
+  });
+}
+
+/** hwpx 안의 표를 모두 자리 그대로 읽는다 */
+export function extractHwpxTables(data: Uint8Array): Table[] {
+  const out: Table[] = [];
+  for (const doc of hwpxDocs(data)) {
+    for (const tbl of Array.from(doc.getElementsByTagNameNS(HP_NS, 'tbl'))) out.push(readTable(tbl));
+  }
+  return out;
+}
+
 export function extractHwpxParagraphs(data: Uint8Array): string[] {
   const files = unzipSync(data);
   const names = Object.keys(files)
@@ -356,8 +479,20 @@ export function extractHwpxParagraphs(data: Uint8Array): string[] {
    4. 문단 뽑기
    ================================================================== */
 
+export const isHwpx = (d: Uint8Array) =>
+  d[0] === 0x50 && d[1] === 0x4b && d[2] === 0x03 && d[3] === 0x04;
+
+/** 표를 못 읽어도 원고는 살린다 — 문의 표 하나 때문에 전체가 멈추면 안 된다 */
+function tryContactTable(data: Uint8Array): ContactTable | null {
+  try {
+    return contactTableOf(extractHwpxTables(data));
+  } catch {
+    return null;
+  }
+}
+
 export function extractParagraphs(data: Uint8Array): string[] {
-  if (data[0] === 0x50 && data[1] === 0x4b && data[2] === 0x03 && data[3] === 0x04) {
+  if (isHwpx(data)) {
     return extractHwpxParagraphs(data);
   }
 
@@ -489,28 +624,24 @@ function bodyIndices(paras: string[]): number[] {
 }
 
 /**
- * 직위로 볼 수 있는 말.
+ * 직위로 볼 수 있는 말 — **옛 .hwp(이진 서식) 전용이다.**
+ *
+ * hwpx 는 칸 자리를 파일에 적어 두므로 이 목록을 보지 않는다(contactTableOf).
+ * 이진 서식에는 그 자리 정보가 없어 문단 줄만 훑을 수 있고, 그래서 여기서만 낱말을 본다.
+ * 목록에 없는 말이 나와도 사람은 버리지 않는다 — 아래 parseContacts 를 보라.
  *
  * 서식마다 ‘과장’ 이라고만 쓰기도 하고 ‘행정지원과장’ 처럼 앞에 부서를 붙이기도 한다.
  * 한글 사이에 공백을 넣는 서식(‘담 당 자’, ‘중 등 담 당’)도 흔하다.
  * 그래서 공백을 지운 뒤 **끝말**로 판단한다.
  */
 const ROLE_SUFFIX = [
-  '교육연구사',
-  '교육연구관',
   '장학사',
   '장학관',
-  '연구사',
-  '연구관',
-  '지도사',
   '담당자',
-  '담당관',
   '주무관',
   '사무관',
-  '실무관',
   '센터장',
   '교육장',
-  '주사보',
   '과장',
   '국장',
   '관장',
@@ -518,14 +649,7 @@ const ROLE_SUFFIX = [
   '부장',
   '팀장',
   '계장',
-  '소장',
-  '원장',
-  '차장',
-  '반장',
   '담당',
-  '선임',
-  '주임',
-  '주무',
   '주사',
 ];
 const TEL_RE = /^(0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4})$/;
@@ -607,11 +731,11 @@ export interface PressRelease {
   부제: string[];
   본문: string[];
   부서: string;
-  과장: string;
-  담당: string;
-  담당자: string;
-  /** 문의 표에 적혀 있던 직위 글자 그대로 (과장·담당·담당자 칸 순서) */
-  직위: string[];
+  /**
+   * 문의 표를 자리 그대로 옮긴 것. 줄마다 [직위, 이름, 전화] — 적혀 있던 글자 그대로다.
+   * 직위를 낱말로 맞히지 않는다. 칸 자리를 그대로 읽어 그대로 다시 넣는다.
+   */
+  문의: string[][];
   서식: string;
 }
 
@@ -629,10 +753,7 @@ export function parsePressRelease(data: Uint8Array): PressRelease {
     부제: [],
     본문: [],
     부서: '',
-    과장: '',
-    담당: '',
-    담당자: '',
-    직위: [],
+    문의: [],
     서식: '',
   };
 
@@ -700,36 +821,19 @@ export function parsePressRelease(data: Uint8Array): PressRelease {
     r.부제 = rest;
   }
 
-  const contacts = parseContacts(paras);
-  r.부서 = contacts.부서;
-  const join = (p: { name: string; tel: string }) =>
-    [p.name, p.tel].filter(Boolean).join(' | ');
-  // 서식의 세 칸(과장·담당·담당자)에 넣는다.
-  // 과장급은 첫 칸으로, 나머지는 나온 순서대로 담당 → 담당자.
   /*
-   * 직위 글자도 함께 들고 간다.
+   * 문의 표는 자리로 읽는다.
    *
-   * 전에는 이름과 전화번호만 옮기고 직위 칸은 양식의 ‘과장·담당·담당자’ 로 덮어썼다.
-   * 그래서 ‘전산행정담당’ 이 ‘담당’ 으로, ‘주무관’ 이 ‘담당자’ 로 바뀐 채 나갔다.
-   * 고쳐 달라고 한 적 없는 사실이 바뀐 것이다. 적혀 있던 그대로 다시 쓴다.
+   * hwpx 는 칸마다 열·줄 번호가 파일에 적혀 있으므로 그것을 그대로 쓴다. 무슨 직위가
+   * 적혀 있든 상관없다. 옛 .hwp(이진 서식)에는 그 자리 정보가 없어서 문단 목록을
+   * 훑는 예전 방식을 남겨 둔다 — 거기서만 직위 낱말을 본다.
    */
-  /*
-   * 관리직이 있으면 그 사람만 첫 칸으로 올리고, 나머지는 적힌 차례대로 내려 쓴다.
-   * 관리직이 없으면 **첫 칸을 비우지 않는다.** 전에는 과장 칸을 관리직 전용으로 두어
-   * 팀장·선임·주임만 있는 부서에서 첫 줄이 통째로 비고 맨 아래 사람이 잘려 나갔다.
-   */
-  const 관리직 = ['과장', '국장', '관장', '센터장', '실장', '부장', '교육장'];
-  const people = contacts.사람.map((p) => ({ line: join(p), label: p.label, role: p.role }))
-    .filter((x) => x.line);
-  const boss = people.findIndex((x) => 관리직.includes(x.role));
-  const ordered = boss > 0
-    ? [people[boss], ...people.filter((_, i) => i !== boss)]
-    : people;
-  const slot = ordered.slice(0, 3);
-  r.과장 = slot[0]?.line ?? '';
-  r.담당 = slot[1]?.line ?? '';
-  r.담당자 = slot[2]?.line ?? '';
-  r.직위 = [slot[0]?.label ?? '', slot[1]?.label ?? '', slot[2]?.label ?? ''];
+  const table = isHwpx(data) ? tryContactTable(data) : null;
+  const contacts = table ? { 부서: '', 사람: [] } : parseContacts(paras);
+  r.부서 = table?.부서 || contacts.부서;
+  r.문의 = table
+    ? table.사람.filter((row) => row.some((c) => c.trim()))
+    : contacts.사람.map((p) => [p.label, p.name, p.tel]).filter((row) => row.some(Boolean));
 
   r.서식 = fieldValue(paras, '배포일') ? '2026-07 이후' : '이전 서식';
   r.ok = Boolean(r.제목 || r.본문.length);

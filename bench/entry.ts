@@ -6,4 +6,5 @@ export { reviewWithAi, fillBlanks, verifyEdits, tenseChanged } from '../src/lib/
 export type { AiConfig } from '../src/lib/ai';
 export { checkParagraph, guardRewrite, diffSegments, diffAll, onlyGrounded, fixByunggiJosa } from '../src/lib/rewrite';
 export { rewriteDraft, rewriteAgain } from '../src/lib/ai';
-export { parseContacts } from '../src/lib/hwp';
+export { parseContacts, parsePressRelease, extractHwpxTables, contactTableOf } from '../src/lib/hwp';
+export { buildHwpx, EMPTY_META, emptyContacts } from '../src/lib/hwpxOut';
