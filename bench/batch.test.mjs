@@ -29,11 +29,28 @@ const wanted = (body) => {
     .filter(Number.isInteger);
 };
 
-/** fail 에 든 순번의 묶음만 끊는다 */
-function stub(fail = []) {
+/** 짜임 판정은 고쳐 쓰기와 따로 묻는다 — 지시문에 문단 번호를 짚지 않는다 */
+const isJudge = (body) =>
+  JSON.parse(body).contents[0].parts[0].text.startsWith('[보도자료 전문]');
+
+/**
+ * fail 에 든 순번의 **고쳐 쓰기 묶음만** 끊는다.
+ * 짜임 판정은 따로 세고 따로 답한다(같이 세면 묶음 수가 하나 더 잡힌다).
+ */
+function stub(fail = [], judgeFails = false) {
   let n = 0;
   const asked = [];
+  asked.judge = 0;
   globalThis.fetch = async (_url, init) => {
+    if (isJudge(init.body)) {
+      asked.judge += 1;
+      if (judgeFails) return { ok: false, status: 500, text: async () => 'NOPE' };
+      const j = { judged: [{ item: '정보 배열', about: '[2] 다 문단', why: '두괄식이 아닙니다' }] };
+      return {
+        ok: true,
+        json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(j) }] } }] }),
+      };
+    }
     const idx = wanted(init.body);
     asked.push(idx);
     const mine = n++;
@@ -41,7 +58,7 @@ function stub(fail = []) {
     const body = {
       paragraphs: idx.map((i) => ({ i, text: `${PARAS[i]}(고침)` })),
       changes: [{ from: '문단', to: '문단(고침)', axis: '정확성', item: '띄어쓰기', why: '' }],
-      confirm: [{ about: '이름', why: '', suggest: '' }],
+      confirm: [{ about: '이름', why: '', suggest: '', item: '외국 글자' }],
       summary: '총평',
     };
     return {
@@ -64,6 +81,16 @@ check('다 고쳐져 돌아옴', r.paragraphs.every((p) => p.endsWith('(고침)'
 check('못 받은 문단 없음', r.missed.length, 0);
 check('같은 내역은 한 번만', r.changes.length, 1);
 check('같은 확인거리도 한 번만', r.confirm.length, 1);
+check('짜임 판정은 딱 한 번만 묻는다', asked.judge, 1);
+check('짚은 것이 돌아온다', r.judged.map((j) => j.item).join(','), '정보 배열');
+check('판정을 받았다', r.judgeFailed, false);
+
+console.log('\n짜임 판정이 끊겨도 고쳐 쓰기는 산다');
+stub([], true);
+r = await rewriteDraft(CFG, PARAS, [], 3);
+check('고쳐 쓰기는 그대로', r.paragraphs[0], '가 문단(고침)');
+check('판정만 빈손', r.judged.length, 0);
+check('못 받았다고 말한다', r.judgeFailed, true);
 
 console.log('\n한 묶음이 끊겨도 나머지는 살린다');
 stub([1]);

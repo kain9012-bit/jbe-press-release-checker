@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
-    "bench": "node bench/build-lib.mjs && node bench/rules.mjs && node bench/stages.test.mjs && node bench/josa.test.mjs && node bench/rewrite.test.mjs && node bench/contacts.test.mjs && node bench/batch.test.mjs && node bench/procedure.test.mjs && node bench/violations.test.mjs && node bench/voting.test.mjs && node bench/worker.test.mjs && node bench/vercel.test.mjs",
+    "bench": "node bench/build-lib.mjs && node bench/rules.mjs && node bench/stages.test.mjs && node bench/josa.test.mjs && node bench/rewrite.test.mjs && node bench/contacts.test.mjs && node bench/checklist.test.mjs && node bench/batch.test.mjs && node bench/procedure.test.mjs && node bench/violations.test.mjs && node bench/voting.test.mjs && node bench/worker.test.mjs && node bench/vercel.test.mjs",
     "bench:ai": "node bench/build-lib.mjs && node bench/consistency.mjs"
   },
   "dependencies": {

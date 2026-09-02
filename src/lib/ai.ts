@@ -724,11 +724,25 @@ const REWRITE_SYSTEM = `당신은 이미 작성된 대한민국 공공기관 보
 - paragraphs: 문단마다 { i: 준 번호, text: 고친 글 }. 고칠 데가 없으면 원문 그대로.
 - changes: **고친 자리마다 빠짐없이** { from, to, axis, item, why }.
   from 은 원문에 있던 말 그대로, to 는 고친 말 그대로.
-  axis 는 용이성·정확성·소통성 중 하나, item 은 위 괄호 안의 짧은 이름,
-  why 는 어느 기준에 어떻게 어긋나는지 한 문장.
+  axis 는 용이성·정확성·소통성 중 하나, why 는 어느 기준에 어떻게 어긋나는지 한 문장.
+  item 은 **아래 목록에서 고른 이름 그대로** 적는다.
 - confirm: **사람이 정해야 할 것.** 이름을 그대로 둔 것, 시제가 실제와 맞는지, 인용문이
-  실제 발언과 같은지. { about, why, suggest }.
+  실제 발언과 같은지. { about, why, suggest, item }. item 도 아래 목록에서 고른다.
 - summary: 기준에 맞는지 두세 문장 총평.
+
+[item — 반드시 이 가운데서 고른다. 새로 지어내지 마라]
+점검표가 이 이름으로 어느 요건에 걸렸는지를 찾는다. 다른 말을 쓰면 그 지적은
+요건에 안 붙어, 열 곳을 고쳐 놓고도 점검표가 ‘어긋난 곳 없음’ 이라고 말하게 된다.
+  맞춤법        한글 맞춤법·표준어·두음 법칙·문장 부호
+  띄어쓰기      띄어쓰기
+  외래어 표기   외래어 표기법, 로마자 표기법
+  어휘          낱말을 잘못 골라 쓴 것 (뜻이 어긋나는 말)
+  문법          조사·어미, 주술 호응, 번역 투, 피동, 높임
+  권위적 표현   고압적·권위적 표현
+  차별적 표현   성·지역·인종·장애 등을 가르는 표현
+  군더더기      없어도 되는 말
+  외국 글자     로마자·한자를 한글로 (병기 포함)
+  쉬운 우리말   어려운 외래어·행정 용어를 쉬운 말로
 
 출력은 다른 말 없이 JSON 객체 하나만 낸다.`;
 
@@ -765,6 +779,7 @@ const REWRITE_SCHEMA = {
           about: { type: 'string' },
           why: { type: 'string' },
           suggest: { type: 'string' },
+          item: { type: 'string' },
         },
         required: ['about', 'why', 'suggest'],
       },
@@ -785,14 +800,108 @@ export interface Confirm {
   about: string;
   why: string;
   suggest: string;
+  /** 어느 요건에 드는 것인지 (닫힌 목록). 없으면 점검표에 안 붙고 따로 보인다 */
+  item?: string;
+}
+/** 고치지 않고 짚기만 한 것 — 글 짜임에 관한 요건 */
+export interface Judged {
+  item: string;
+  about: string;
+  why: string;
 }
 export interface RewriteResult {
   paragraphs: string[];
   changes: Change[];
   confirm: Confirm[];
+  /** 글 짜임에 관한 요건에서 짚은 것 (고치지는 않는다) */
+  judged: Judged[];
   summary: string;
   /** 묶음이 실패해 아예 검토받지 못한 문단 번호 */
   missed: number[];
+  /** 짜임 판정을 못 받았는지 (그 요건은 ‘판단 못 함’ 으로 둔다) */
+  judgeFailed: boolean;
+}
+
+/* ------------------------------------------------------------------
+   짜임 판정 — 고치지 않고 짚기만 하는 요건
+
+   단락 구성·정보의 형식과 배열·시각적 편의는 글을 다시 짜야 고칠 수 있다. 기계가
+   손대면 사실이 바뀌므로 고치게 두지 않는다. 그렇다고 점검표를 비워 두면, 규칙만
+   있던 시절과 똑같이 다섯 항목이 늘 ‘검사 안 함’ 으로 남는다. AI 는 원고 전체를
+   읽으므로 **짚기는 할 수 있다.**
+
+   무엇을 못 하게 하는가
+     ‘잘 썼습니다’ 라고 말하지 못하게 한다. 자가검증 도구가 잘못 괜찮다고 하는 것은
+     아무 말도 안 하느니만 못하다. 어긋나 보이는 곳만 적고, 없으면 빈 배열을 낸다.
+   ------------------------------------------------------------------ */
+
+const JUDGE_SYSTEM = `너는 전북특별자치도교육청 보도자료를 국립국어원 공공언어 기준으로 살피는 사람이다.
+**글을 고치지 마라.** 이번에는 짜임만 본다.
+
+[볼 것 — 이 넷뿐이다]
+- 단락 구성   한 문단에 한 가지 이야기만 담겼는가. 문단 첫 문장이 그 문단의 요지인가.
+              (item: 단락 구성)
+- 정보 형식   일정·대상·장소처럼 나열되는 것을 줄글로 늘어놓지 않았는가.
+              표나 목록이 나은 자리인가.  (item: 정보 형식)
+- 정보 배열   가장 중요한 것이 첫 문단에 왔는가. 보도자료는 두괄식이다.
+              (item: 정보 배열)
+- 시각적 편의 제목·부제·본문 글머리표가 한눈에 갈라지는가.  (item: 시각적 편의)
+
+[가장 중요한 것]
+- **어긋나 보이는 곳만 적는다.** 잘 썼다는 말은 하지 마라. 괜찮으면 빈 배열을 낸다.
+- 짐작으로 채우지 마라. 확실히 짚을 데가 없으면 그 항목은 아예 내지 마라.
+- 고쳐 쓴 글을 내지 마라. 어디가 왜 걸리는지만 적는다.
+- 문장 길이·맞춤법·띄어쓰기·낱말 고르기는 여기서 보지 않는다. 다른 데서 본다.
+
+[내는 것]
+- judged: [{ item, about, why }]
+  item  위 넷 가운데 하나 (그대로 적는다)
+  about 어느 자리인지 (문단 번호나 그 문단 첫머리 몇 글자)
+  why   왜 걸리는지 한 문장
+
+출력은 다른 말 없이 JSON 객체 하나만 낸다.`;
+
+const JUDGE_SCHEMA = {
+  type: 'object',
+  properties: {
+    judged: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          item: {
+            type: 'string',
+            enum: ['단락 구성', '정보 형식', '정보 배열', '시각적 편의'],
+          },
+          about: { type: 'string' },
+          why: { type: 'string' },
+        },
+        required: ['item', 'about', 'why'],
+      },
+    },
+  },
+  required: ['judged'],
+};
+
+const JUDGE_ITEMS = new Set(['단락 구성', '정보 형식', '정보 배열', '시각적 편의']);
+
+async function askJudge(cfg: AiConfig, paras: string[]): Promise<Judged[]> {
+  const user = `[보도자료 전문]\n${paras.map((p, i) => `[${i}] ${p}`).join('\n')}`;
+  const raw =
+    cfg.provider === 'anthropic'
+      ? await callAnthropic(cfg, user, JUDGE_SYSTEM)
+      : cfg.provider === 'gemini' || cfg.provider === 'proxy'
+        ? await callGemini(cfg, user, JUDGE_SYSTEM, JUDGE_SCHEMA)
+        : await callOpenAI(cfg, user, JUDGE_SYSTEM);
+  const parsed = parseJson(raw);
+  return ((parsed.judged ?? []) as Judged[])
+    .filter((j) => j && JUDGE_ITEMS.has(String(j.item).trim()))
+    .map((j) => ({
+      item: String(j.item).trim(),
+      about: String(j.about ?? '').trim(),
+      why: String(j.why ?? '').trim(),
+    }))
+    .filter((j) => j.about || j.why);
 }
 
 /**
@@ -860,9 +969,14 @@ export async function rewriteDraft(
     paras.map((_, i) => i),
     Math.max(1, batch),
   );
-  const answers = await Promise.allSettled(
-    groups.map((want) => askRewrite(cfg, rewriteUser(paras, hints, want))),
-  );
+  /*
+   * 짜임 판정도 같이 나란히 물어본다. 고쳐 쓰기 묶음과 함께 돌리므로 기다리는
+   * 시간이 늘지 않는다. 이쪽이 실패해도 고쳐 쓰기는 그대로 산다.
+   */
+  const [answers, judgeAnswer] = await Promise.all([
+    Promise.allSettled(groups.map((want) => askRewrite(cfg, rewriteUser(paras, hints, want)))),
+    Promise.allSettled([askJudge(cfg, paras)]).then((r) => r[0]),
+  ]);
 
   // 하나도 못 받았으면 그건 실패다. 원문을 그대로 돌려주면 '이상 없음' 으로 읽힌다.
   const ok = answers.filter((a) => a.status === 'fulfilled');
@@ -911,7 +1025,15 @@ export async function rewriteDraft(
     return true;
   });
 
-  return { paragraphs: out, changes: uniqChanges, confirm: uniqConfirm, summary, missed };
+  return {
+    paragraphs: out,
+    changes: uniqChanges,
+    confirm: uniqConfirm,
+    judged: judgeAnswer.status === 'fulfilled' ? judgeAnswer.value : [],
+    summary,
+    missed,
+    judgeFailed: judgeAnswer.status !== 'fulfilled',
+  };
 }
 
 /**

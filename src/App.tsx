@@ -32,14 +32,13 @@ import {
   CARD,
   type Tone,
 } from "./components/Ui";
-import { CHECKLIST } from "./data/checklist";
+import { CAUTION, rollUp, verdict } from "./lib/checklist";
 import {
   analyze,
   buildRevised,
   buildRevisedParts,
   defaultDecisions,
   isApplicable,
-  isRuleChecked,
   replacementFor,
   DATA_COUNTS,
   type AnalyzeResult,
@@ -56,6 +55,7 @@ import {
   type AiConfig,
   type Change,
   type Confirm,
+  type Judged,
 } from "./lib/ai";
 import { parsePressRelease } from "./lib/hwp";
 import {
@@ -220,6 +220,9 @@ export default function App() {
   const [verifyCount, setVerifyCount] = useState(0);
   /** 사람이 정해야 할 것 — 이름·시제·인용문처럼 기계가 정할 수 없는 자리 */
   const [confirms, setConfirms] = useState<Confirm[]>([]);
+  const [judged, setJudged] = useState<Judged[]>([]);
+  /** 짜임 판정을 못 받았으면 그 요건은 ‘판단 못 함’ 으로 둔다 */
+  const [judgeFailed, setJudgeFailed] = useState(false);
   /** 묶음이 실패해 아예 검토받지 못한 문단 수 */
   const [missed, setMissed] = useState(0);
   /** 세 단계를 다 돌 때까지 켜 둔다. 그동안 화면에는 아무것도 안 올린다. */
@@ -497,6 +500,8 @@ export default function App() {
     let ai: Finding[] = [];
     let summary = "";
     let confirm: Confirm[] = [];
+    let judged: Judged[] = [];
+    let judgeFailed = false;
     let heldBack = 0;
     let ungrounded = 0;
     let missed = 0;
@@ -524,6 +529,8 @@ export default function App() {
         const got = await rewriteDraft(cfg, paras, hints);
         summary = got.summary;
         confirm = got.confirm;
+        judged = got.judged;
+        judgeFailed = got.judgeFailed;
         missed = got.missed.length;
 
         // 3차 — 검사관. 사실이 바뀐 문단은 받지 않는다.
@@ -579,7 +586,11 @@ export default function App() {
      * AI 로 돌렸다가 실패했으면 아무것도 켜지 않는다. 규칙 고침을 대신 켜 놓으면
      * 담당자는 그것을 'AI 가 검토한 결과' 로 읽는다. 수정본은 원문 그대로 둔다.
      */
-    if (withAi && failed) dec = {};
+    if (withAi && failed) {
+      dec = {};
+      judged = [];
+      judgeFailed = true;
+    }
 
     /*
      * 규칙만 돌렸을 때만 규칙의 고침을 켠다.
@@ -612,6 +623,8 @@ export default function App() {
     setAiFindings(ai);
     setAiSummary(summary);
     setConfirms(confirm);
+    setJudged(judged);
+    setJudgeFailed(judgeFailed);
     setMissed(failed ? 0 : missed);
     setVerifyCount(heldBack + ungrounded);
     setAiError(failed);
@@ -681,51 +694,68 @@ export default function App() {
 
   /* ---------------- 점검표 ---------------- */
 
-  const checklist = useMemo(
-    () =>
-      CHECKLIST.map((c) => ({
-        ...c,
-        hits: findings.filter((f) => c.match.some((m) => f.sub.includes(m))),
-        // 규칙이 이 항목을 보기는 하는지. 손으로 적어 두면 규칙을 고쳤을 때
-        // 표가 조용히 거짓말을 하므로, 실제 규칙 목록에서 따진다.
-        seen: isRuleChecked(c.match),
-      })),
-    [findings],
-  );
-  const seenItems = checklist.filter((c) => c.seen);
-  const blindItems = checklist.filter((c) => !c.seen);
+  /*
+   * 점검표는 **이 원고가 요건 15항목을 충족했는가**를 보는 표다.
+   * 누가 검사했는지를 알리는 표가 아니다. 그래서 요건 차례를 그대로 두고,
+   * 요건마다 어긋난 것이 있었는지를 적는다.
+   *
+   * 잇는 방법도 바꿨다. 전에는 규칙이 붙이던 긴 이름을 글자로 견주었는데, 지적을
+   * AI 가 내게 되면서 이름이 달라져 연결이 통째로 끊겼다. 열 곳을 고쳐 놓고
+   * 전 항목이 ‘걸림 없음’ 이었다. 이제는 AI 가 닫힌 목록에서 고른 이름으로 잇는다.
+   */
+  const roll = useMemo(() => {
+    const hitsOf = (f: Finding) => ({ from: f.text, to: f.fixes[0] ?? "", why: f.why, item: f.sub });
+    return rollUp(
+      findings.map(hitsOf),
+      judged.map((j) => ({ from: j.about, to: "", why: j.why, item: j.item })),
+      confirms.map((c) => ({ from: c.about, to: "", why: c.why, item: c.item })),
+      splitSource(source),
+    );
+  }, [findings, judged, confirms, source]);
+
+  const AREAS = ["정확성", "소통성"] as const;
 
   const checklistText = useMemo(() => {
+    const line = (r: (typeof roll.rows)[number]) => {
+      const parts = [`[${verdict(r)}] ${r.group} ${r.question}`];
+      if (r.hits.length) {
+        parts.push(
+          "    " +
+            r.hits
+              .slice(0, 5)
+              .map((h) => (h.to ? `${h.from} → ${h.to}` : h.from))
+              .join(", ") +
+            (r.hits.length > 5 ? " …" : ""),
+        );
+      }
+      if (r.asks.length) parts.push(`    작성자 확인 ${r.asks.length}건 — ${r.asks.map((a) => a.from).join(", ")}`);
+      if (!r.hits.length && r.byEye) parts.push(`    ${r.byEye}`);
+      return parts.join("\n");
+    };
     const lines = [
       "보도자료 공공언어 자가점검표",
+      "공공언어의 요건 15항목 (개정판 한눈에 알아보는 공공언어 바로 쓰기)",
       `작성 시각: ${new Date().toLocaleString("ko-KR")}`,
       `제목: ${meta.제목}`,
       `분량: ${result?.wordCount ?? 0}어절 / ${result?.charCount ?? 0}자`,
       "",
-      // 어절 수 대비 비율은 빼 둔다. 실제 배점 산식이 공개돼 있지 않아 참고치일 뿐인데,
-      // 번역 투처럼 사람이 판단할 것은 비율에서 빠지다 보니 ‘6건인데 0.00%’ 같은
-      // 고장 난 줄이 나왔다. 셈이 틀린 것은 아니지만 읽는 사람에게는 그냥 오류로 보인다.
-      ...AXES.map(
-        (a) => `[${a}] 지적 ${findings.filter((f) => f.axis === a).length}건`,
-      ),
-      "",
-      `── 규칙이 본 것 (${seenItems.length}항목) ──`,
-      ...seenItems.map(
-        (c) =>
-          `[${c.hits.length === 0 ? "걸림 없음" : `${c.hits.length}건`}] ${c.area}·${c.group} ${
-            c.question
-          }` + (c.partial ? `\n    다만 — ${c.partial}.` : ""),
-      ),
-      "",
-      `── 규칙이 못 보는 것 (${blindItems.length}항목) — 작성자가 직접 읽어 보세요 ──`,
-      ...blindItems.map(
-        (c) => `[ ] ${c.area}·${c.group} ${c.question}` + (c.byEye ? `\n    ${c.byEye}` : ""),
-      ),
-      "",
-      "※ ‘걸림 없음’ 은 규칙에 안 걸렸다는 뜻이지, 그 항목을 지켰다는 뜻이 아닙니다.",
+      ...AREAS.flatMap((area) => [
+        `── ${area} ──`,
+        ...roll.rows.filter((r) => r.area === area).map(line),
+        "",
+      ]),
+      ...(roll.strays.length
+        ? [
+            `── 요건에 못 붙인 지적 ${roll.strays.length}건 ──`,
+            ...roll.strays.map((x) => `[${x.item}] ${x.from}${x.to ? ` → ${x.to}` : ""}`),
+            "",
+          ]
+        : []),
+      ...(judgeFailed ? ["※ 글 짜임(단락 구성·정보 형식·배열·시각적 편의) 판정을 받지 못했습니다.", ""] : []),
+      `※ ${CAUTION}`,
     ];
     return lines.join("\n");
-  }, [seenItems, blindItems, findings, result, meta.제목]);
+  }, [roll, result, meta.제목, judgeFailed]);
 
   const readyToRun = text.trim().length > 0;
 
@@ -1658,85 +1688,99 @@ export default function App() {
 
               {/*
                 ○ 를 쓰지 않는다.
-                예전에는 규칙이 아예 안 보는 항목에도 ○ 가 붙었다. 아래에 ‘지켰다는
+                예전에는 아예 검사하지 않은 항목에도 ○ 가 붙었다. 아래에 ‘지켰다는
                 보증이 아닙니다’ 라고 적어 두었지만 사람은 동그라미를 보면 통과로 읽는다.
                 자가검증 도구가 잘못 ‘괜찮다’ 고 말하는 것은 아무 말도 안 하느니만 못하다.
-                그래서 규칙이 본 것과 못 보는 것을 아예 갈라 놓는다.
+                그래서 요건마다 무엇이 걸렸는지를 말로 적는다.
               */}
-              <div className={`${CARD} overflow-hidden`}>
-                <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-bold text-slate-600">
-                  <ClipboardCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                  규칙이 본 것 {seenItems.length}항목
-                </div>
-                <ul className="divide-y divide-slate-100">
-                  {seenItems.map((c) => (
-                    <li key={c.id} className="flex items-start gap-3 px-5 py-3">
-                      <span
-                        className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-xs font-bold ${
-                          c.hits.length === 0
-                            ? "bg-slate-100 text-slate-500"
-                            : "bg-amber-50 text-amber-800"
-                        }`}
-                      >
-                        {c.hits.length === 0 ? "걸림 없음" : `${c.hits.length}건`}
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-sm text-slate-800">
-                          <span className="mr-2 text-xs font-bold text-slate-400">
-                            {c.area}·{c.group}
+              {AREAS.map((area) => (
+                <div key={area} className={`${CARD} overflow-hidden`}>
+                  <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-bold text-slate-600">
+                    <ClipboardCheck className="w-3.5 h-3.5" aria-hidden="true" />
+                    {area}
+                    <span className="font-normal text-slate-500">
+                      {roll.rows.filter((r) => r.area === area && r.hits.length).length}항목에서
+                      어긋난 곳을 찾았습니다
+                    </span>
+                  </div>
+                  <ul className="divide-y divide-slate-100">
+                    {roll.rows
+                      .filter((r) => r.area === area)
+                      .map((r) => (
+                        <li key={r.id} className="flex items-start gap-3 px-5 py-3">
+                          <span
+                            className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-xs font-bold ${
+                              r.hits.length
+                                ? "bg-amber-50 text-amber-800"
+                                : "bg-slate-100 text-slate-500"
+                            }`}
+                          >
+                            {verdict(r)}
                           </span>
-                          {c.question}
-                        </p>
-                        {c.hits.length > 0 && (
-                          <p className="mt-0.5 text-xs text-amber-800">
-                            {c.hits
-                              .slice(0, 5)
-                              .map((h) => h.text)
-                              .join(", ")}
-                            {c.hits.length > 5 && " …"}
-                          </p>
-                        )}
-                        {c.partial && (
-                          <p className="mt-0.5 text-xs text-slate-500">
-                            다만 — {c.partial}.
-                          </p>
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className={`${CARD} overflow-hidden`}>
-                <div className="flex items-start gap-2 border-b border-slate-200 bg-amber-50 px-5 py-3 text-xs text-amber-900">
-                  <AlertTriangle
-                    className="mt-0.5 w-3.5 h-3.5 shrink-0"
-                    aria-hidden="true"
-                  />
-                  <span>
-                    <b className="font-bold">
-                      규칙이 못 보는 것 {blindItems.length}항목
-                    </b>{" "}
-                    — 검사를 안 한 것이지 잘 썼다는 뜻이 아닙니다. 이 {blindItems.length}가지는
-                    작성자가 직접 읽어 보셔야 합니다.
-                  </span>
+                          <div className="min-w-0">
+                            <p className="text-sm text-slate-800">
+                              <span className="mr-2 text-xs font-bold text-slate-400">
+                                {r.group}
+                              </span>
+                              {r.question}
+                            </p>
+                            {r.hits.length > 0 && (
+                              <p className="mt-0.5 text-xs text-amber-800">
+                                {r.hits
+                                  .slice(0, 5)
+                                  .map((h) => (h.to ? `${h.from} → ${h.to}` : h.from))
+                                  .join(", ")}
+                                {r.hits.length > 5 && " …"}
+                              </p>
+                            )}
+                            {r.asks.length > 0 && (
+                              <p className="mt-0.5 text-xs text-blue-800">
+                                작성자 확인 {r.asks.length}건 —{" "}
+                                {r.asks.map((a) => a.from).join(", ")}
+                              </p>
+                            )}
+                            {/* 짚은 것이 없을 때만 눈으로 볼 거리를 적는다. 걸린 것이 있으면 그것부터 본다 */}
+                            {r.hits.length === 0 && r.byEye && (
+                              <p className="mt-0.5 text-xs text-slate-500">{r.byEye}</p>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                  </ul>
                 </div>
-                <ul className="divide-y divide-slate-100">
-                  {blindItems.map((c) => (
-                    <li key={c.id} className="px-5 py-3">
-                      <p className="text-sm text-slate-800">
-                        <span className="mr-2 text-xs font-bold text-slate-400">
-                          {c.area}·{c.group}
-                        </span>
-                        {c.question}
-                      </p>
-                      {c.byEye && (
-                        <p className="mt-0.5 text-xs text-slate-600">{c.byEye}</p>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              ))}
+
+              {/*
+                요건에 못 붙인 지적은 감추지 않는다. 조용히 사라지면 점검표가 또
+                ‘어긋난 곳 없음’ 이라고 거짓말을 하게 된다.
+              */}
+              {roll.strays.length > 0 && (
+                <div className={`${CARD} overflow-hidden`}>
+                  <div className="border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-bold text-slate-600">
+                    요건에 못 붙인 지적 {roll.strays.length}건
+                  </div>
+                  <ul className="divide-y divide-slate-100">
+                    {roll.strays.map((x, i) => (
+                      <li key={i} className="px-5 py-3 text-sm text-slate-800">
+                        <span className="mr-2 text-xs font-bold text-slate-400">{x.item}</span>
+                        {x.to ? `${x.from} → ${x.to}` : x.from}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {judgeFailed && aiState === "done" && (
+                <p className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+                  <AlertTriangle className="mt-0.5 w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  <span>
+                    글 짜임(단락 구성·정보의 형식과 배열·시각적 편의) 판정을 받지 못했습니다.
+                    그 네 항목은 작성자가 직접 읽어 보셔야 합니다.
+                  </span>
+                </p>
+              )}
+
+              <p className="text-xs text-slate-500">{CAUTION}</p>
             </section>
               </div>
             </details>
