@@ -3,6 +3,7 @@ import { PATTERN_RULES, EXTRA_LOANWORDS, ROMAN_KOREAN, checkDueum, type Axis } f
 export type { Axis };
 import termsRaw from '../data/terms.json';
 import appendixRaw from '../data/appendix.json';
+import { LONG_SENTENCE } from './checklist';
 
 /* ------------------------------------------------------------------ */
 /* 자료                                                                */
@@ -456,7 +457,8 @@ export function analyze(text: string): AnalyzeResult {
       sentences.push({ text: t, start: m.index, words: t.split(/\s+/).filter(Boolean).length });
     }
   }
-  const LONG = 40;
+  // 점검표와 같은 숫자를 쓴다. 둘로 갈라 두면 같은 원고에 서로 다른 말을 한다.
+  const LONG = LONG_SENTENCE;
   const longSentences = sentences.filter((s) => s.words >= LONG).length;
   for (const s of sentences) {
     if (s.words < LONG) continue;

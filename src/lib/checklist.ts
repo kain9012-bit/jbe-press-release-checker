@@ -59,8 +59,17 @@ export function sentences(text: string): string[] {
     .filter(Boolean);
 }
 
-/** 국립국어원 권고 — 한 문장은 50자 안팎, 어절로는 스물을 넘기지 않는 것이 좋다 */
-export const LONG_SENTENCE = 20;
+/**
+ * 지나치게 긴 문장으로 볼 어절 수.
+ *
+ * 이 숫자는 **한 곳에만 둔다.** 규칙 검사(analyze)도 이것을 쓴다. 처음에 여기에
+ * 따로 스물을 적었더니, 규칙은 마흔인데 점검표는 스물이라 같은 원고를 두고 한쪽은
+ * 한 문장, 다른 쪽은 일곱 문장이 길다고 말했다. 한 도구가 두 소리를 내면 안 된다.
+ * 보도자료 문장은 원래 길어서 스물로 재면 거의 모든 문장이 걸려 아무 말도 못 한다.
+ *
+ * 근거: [바로] 첫째 마당 2-나-나) 지나치게 긴 문장 삼가기
+ */
+export const LONG_SENTENCE = 40;
 
 export interface Longest {
   words: number;
