@@ -496,13 +496,21 @@ function bodyIndices(paras: string[]): number[] {
  * 그래서 공백을 지운 뒤 **끝말**로 판단한다.
  */
 const ROLE_SUFFIX = [
+  '교육연구사',
+  '교육연구관',
   '장학사',
   '장학관',
+  '연구사',
+  '연구관',
+  '지도사',
   '담당자',
+  '담당관',
   '주무관',
   '사무관',
+  '실무관',
   '센터장',
   '교육장',
+  '주사보',
   '과장',
   '국장',
   '관장',
@@ -510,11 +518,20 @@ const ROLE_SUFFIX = [
   '부장',
   '팀장',
   '계장',
+  '소장',
+  '원장',
+  '차장',
+  '반장',
   '담당',
+  '선임',
+  '주임',
+  '주무',
   '주사',
 ];
 const TEL_RE = /^(0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4})$/;
 const DEPT_RE = /(과|관|실|센터|단|팀|국)$/;
+/** 직위 칸으로 볼 수 있는 짧은 말 (숫자·문장부호가 없다) */
+const LABEL_RE = /^[가-힣A-Za-z·]{2,12}$/;
 
 const despace = (s: string) => s.replace(/\s+/g, '');
 
@@ -526,7 +543,7 @@ function roleOf(text: string): string {
 }
 
 /** 담당 부서 표에서 부서명과 담당자를 뽑는다. */
-function parseContacts(paras: string[]) {
+export function parseContacts(paras: string[]) {
   // label 은 표에 실제로 적혀 있던 직위 글자 그대로다(‘전산행정담당’, ‘중 등 담 당’).
   // role 은 그것을 갈래로 나눈 끝말이다. 내보낼 때는 label 을 그대로 다시 쓴다.
   const out = { 부서: '', 사람: [] as { role: string; label: string; name: string; tel: string }[] };
@@ -558,6 +575,19 @@ function parseContacts(paras: string[]) {
     if (!pending.name && /^[가-힣○◯xX?·\s]{2,10}$/.test(t)) {
       pending.name = despace(t);
       continue;
+    }
+    /*
+     * 목록에 없는 직위여도 사람을 버리지 않는다.
+     *
+     * ‘학부모지원팀 선임’, ‘학부모지원팀 주임’ 처럼 부서마다 쓰는 말이 다르다.
+     * 끝말을 못 알아보면 이 줄이 그냥 지나가고, 뒤따르는 이름과 전화번호는 이미
+     * 찬 칸에 막혀 함께 사라졌다. 실제로 세 사람 중 두 사람이 통째로 빠졌다.
+     * 앞사람 칸이 다 찼는데 이름도 번호도 아닌 짧은 말이 나오면 다음 사람의
+     * 직위로 본다. 못 알아본 말은 label 로 그대로 다시 쓰므로 글자는 안 바뀐다.
+     */
+    if (pending.name && LABEL_RE.test(despace(t))) {
+      out.사람.push(pending);
+      pending = { role: '', label: t, name: '', tel: '' };
     }
   }
   if (pending) out.사람.push(pending);
@@ -683,22 +713,23 @@ export function parsePressRelease(data: Uint8Array): PressRelease {
    * 그래서 ‘전산행정담당’ 이 ‘담당’ 으로, ‘주무관’ 이 ‘담당자’ 로 바뀐 채 나갔다.
    * 고쳐 달라고 한 적 없는 사실이 바뀐 것이다. 적혀 있던 그대로 다시 쓴다.
    */
-  const rest: { line: string; label: string }[] = [];
+  /*
+   * 관리직이 있으면 그 사람만 첫 칸으로 올리고, 나머지는 적힌 차례대로 내려 쓴다.
+   * 관리직이 없으면 **첫 칸을 비우지 않는다.** 전에는 과장 칸을 관리직 전용으로 두어
+   * 팀장·선임·주임만 있는 부서에서 첫 줄이 통째로 비고 맨 아래 사람이 잘려 나갔다.
+   */
   const 관리직 = ['과장', '국장', '관장', '센터장', '실장', '부장', '교육장'];
-  const 직위: string[] = ['', '', ''];
-  for (const person of contacts.사람) {
-    const line = join(person);
-    if (!line) continue;
-    if (관리직.includes(person.role) && !r.과장) { r.과장 = line; 직위[0] = person.label; }
-    else if (!r.담당) { r.담당 = line; 직위[1] = person.label; }
-    else if (!r.담당자) { r.담당자 = line; 직위[2] = person.label; }
-    else rest.push({ line, label: person.label });
-  }
-  for (const x of rest) {
-    if (!r.담당) { r.담당 = x.line; 직위[1] = x.label; }
-    else if (!r.담당자) { r.담당자 = x.line; 직위[2] = x.label; }
-  }
-  r.직위 = 직위;
+  const people = contacts.사람.map((p) => ({ line: join(p), label: p.label, role: p.role }))
+    .filter((x) => x.line);
+  const boss = people.findIndex((x) => 관리직.includes(x.role));
+  const ordered = boss > 0
+    ? [people[boss], ...people.filter((_, i) => i !== boss)]
+    : people;
+  const slot = ordered.slice(0, 3);
+  r.과장 = slot[0]?.line ?? '';
+  r.담당 = slot[1]?.line ?? '';
+  r.담당자 = slot[2]?.line ?? '';
+  r.직위 = [slot[0]?.label ?? '', slot[1]?.label ?? '', slot[2]?.label ?? ''];
 
   r.서식 = fieldValue(paras, '배포일') ? '2026-07 이후' : '이전 서식';
   r.ok = Boolean(r.제목 || r.본문.length);
