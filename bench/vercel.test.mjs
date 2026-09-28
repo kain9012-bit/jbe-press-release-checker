@@ -80,7 +80,8 @@ const cases = [
   ['허용 안 된 모형', { model: 'gpt-4o' }, 400],
   ['JSON 이 아닌 몸통', { body: '이건 JSON 이 아니다' }, 400],
   ['원고가 너무 김', { body: 'x'.repeat(70000) }, 413],
-  ['GET 으로', { method: 'GET' }, 405],
+  ['GET 은 살았는지만 답한다', { method: 'GET' }, 200],
+  ['PUT 은 막는다', { method: 'PUT' }, 405],
 ];
 for (const [name, opt, want] of cases) {
   check(name, (await run(opt)).statusCode, want);
@@ -112,6 +113,32 @@ check(
   (config?.maxDuration ?? 0) >= 60 && config?.runtime !== 'edge',
   true,
 );
+
+console.log('\n무슨 일이 있어도 까닭을 남긴다');
+{
+  // 상류에 닿지 못하는 상황을 만든다. 함수가 죽으면 버셀이 FUNCTION_INVOCATION_FAILED
+  // 만 내놓아 화면에 단서가 하나도 안 남는다. 실제로 그렇게 막힌 적이 있다.
+  const keep = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('getaddrinfo ENOTFOUND'); };
+  const r = await run({});
+  check('상류가 안 되면 502', r.statusCode, 502);
+  check('까닭이 적혀 온다', r.payload.includes('ENOTFOUND'), true);
+  globalThis.fetch = keep;
+}
+{
+  // 몸통이 객체가 아니면 model 을 넣다가 터질 수 있다. 터져도 까닭을 남겨야 한다.
+  const r = await run({ body: '123' });
+  check('터져도 500 과 함께 말이 남는다', r.statusCode >= 400 && r.payload.includes('message'), true);
+}
+
+console.log('\n살았는지 물어보는 자리 (GET)');
+{
+  const r = await run({ method: 'GET' });
+  const j = JSON.parse(r.payload);
+  check('키가 있는지 알려 준다', j.keySet, true);
+  check('부를 수 있는 모형', j.models.includes('gemini-3.6-flash'), true);
+  check('키 값은 안 내놓는다', r.payload.includes('SECRET'), false);
+}
 
 console.log('\n키를 안 넣었을 때');
 delete process.env.OPENROUTER_API_KEY;

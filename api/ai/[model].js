@@ -82,7 +82,32 @@ async function readBody(req) {
   return Buffer.concat(chunks).toString('utf-8');
 }
 
-export default async function handler(req, res) {
+/**
+ * 살았는지만 물어보는 자리 (GET).
+ *
+ * 함수가 통째로 죽으면 버셀이 FUNCTION_INVOCATION_FAILED 만 내놓는다. 그 화면에는
+ * 까닭이 없어서, 로그를 볼 수 없는 자리에서는 손쓸 도리가 없다. 실제로 그렇게 막혔다.
+ * 키 **값**은 내놓지 않는다. 설정돼 있는지와 부를 수 있는 모형만 말한다 —
+ * 둘 다 이미 웹페이지 꾸러미에 들어 있는 것이라 새로 새는 것이 없다.
+ */
+function health(res) {
+  res.statusCode = 200;
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  res.setHeader('cache-control', 'no-store');
+  res.end(
+    JSON.stringify({
+      ok: true,
+      keySet: Boolean(process.env.OPENROUTER_API_KEY),
+      models: [...ALLOWED_MODELS.keys()],
+      upstream: UPSTREAM,
+      node: process.version,
+    }),
+  );
+  return res;
+}
+
+async function serve(req, res) {
+  if (req.method === 'GET') return health(res);
   if (req.method !== 'POST') return deny(res, 405, 'POST 만 받습니다.');
 
   const host = req.headers.host ?? '';
@@ -119,17 +144,23 @@ export default async function handler(req, res) {
   body.model = model;
   body.provider = { ...(body.provider ?? {}), data_collection: 'deny' };
 
-  const upstream = await fetch(UPSTREAM, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${key}`,
-      // 오픈라우터 대시보드에서 어느 도구가 쓴 것인지 알아보라고 붙인다
-      'HTTP-Referer': `https://${host}`,
-      'X-Title': '보도자료 공공언어 검증',
-    },
-    body: JSON.stringify(body),
-  });
+  let upstream;
+  try {
+    upstream = await fetch(UPSTREAM, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${key}`,
+        // 오픈라우터 대시보드에서 어느 도구가 쓴 것인지 알아보라고 붙인다
+        'HTTP-Referer': `https://${host}`,
+        'X-Title': '보도자료 공공언어 검증',
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    // 상류에 닿지 못한 것을 함수가 죽는 것으로 두지 않는다. 죽으면 까닭이 안 남는다.
+    return deny(res, 502, `상류(오픈라우터)에 닿지 못했습니다: ${e?.message ?? e}`);
+  }
 
   // 상류가 준 답을 그대로 넘긴다. 키가 섞여 나갈 수 있는 머리글은 새로 쓴다.
   const text = await upstream.text();
@@ -138,4 +169,23 @@ export default async function handler(req, res) {
   res.setHeader('cache-control', 'no-store');
   res.end(text);
   return res;
+}
+
+/**
+ * 무슨 일이 있어도 **까닭을 남기고** 끝낸다.
+ *
+ * 처음 올렸을 때 FUNCTION_INVOCATION_FAILED 만 나왔다. 그건 버셀이 내는 말이라
+ * 우리 화면에는 아무 단서가 없고, 로그를 못 보는 자리에서는 고칠 수가 없다.
+ * 터지더라도 우리 손으로 잡아 무엇이 터졌는지 적어 보낸다.
+ */
+export default async function handler(req, res) {
+  try {
+    return await serve(req, res);
+  } catch (e) {
+    try {
+      return deny(res, 500, `중계가 멈췄습니다: ${e?.message ?? e}`);
+    } catch {
+      return res;
+    }
+  }
 }
