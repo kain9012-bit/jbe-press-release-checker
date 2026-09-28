@@ -6,7 +6,7 @@ export { reviewWithAi, fillBlanks, verifyEdits, tenseChanged } from '../src/lib/
 export type { AiConfig } from '../src/lib/ai';
 export { checkParagraph, guardRewrite, diffSegments, diffAll, onlyGrounded, fixByunggiJosa } from '../src/lib/rewrite';
 export { rewriteDraft, rewriteAgain } from '../src/lib/ai';
-export { parseContacts, parsePressRelease, extractHwpxTables, contactTableOf } from '../src/lib/hwp';
+export { parseContacts, parsePressRelease, extractHwpxTables, contactTableOf, titleTableOf } from '../src/lib/hwp';
 export { buildHwpx, EMPTY_META, emptyContacts } from '../src/lib/hwpxOut';
 export { rollUp, verdict, measureSentences, sentences, LONG_SENTENCE } from '../src/lib/checklist';
 export { CHECKLIST, CODES } from '../src/data/checklist';

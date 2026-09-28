@@ -394,6 +394,27 @@ export interface ContactTable {
 }
 
 const DEPT_LABEL_RE = /담\s*당\s*부\s*서/;
+const HEAD_TABLE_RE = /배\s*포\s*일|보\s*도\s*시\s*점/;
+
+/**
+ * 제목·부제가 든 표를 찾는다.
+ *
+ * 전북 서식은 제목 상자를 한 칸짜리 표로 그린다. 머리말 표(배포일·보도시점)도,
+ * 문의 표도 아닌 한 칸짜리 표가 그것이다. 첫 줄이 제목, 나머지가 부제다.
+ */
+export function titleTableOf(tables: Table[]): string[] | null {
+  for (const t of tables) {
+    if (t.cells.some((c) => DEPT_LABEL_RE.test(c.text) || HEAD_TABLE_RE.test(c.text))) continue;
+    if (t.cols !== 1) continue;
+    const lines = t.cells
+      .slice()
+      .sort((a, b) => a.row - b.row)
+      .map((c) => c.text.trim())
+      .filter(Boolean);
+    if (lines.length) return lines;
+  }
+  return null;
+}
 
 /**
  * ‘담당 부서’ 라고 적힌 표를 찾아 자리 그대로 읽는다.
@@ -482,10 +503,10 @@ export function extractHwpxParagraphs(data: Uint8Array): string[] {
 export const isHwpx = (d: Uint8Array) =>
   d[0] === 0x50 && d[1] === 0x4b && d[2] === 0x03 && d[3] === 0x04;
 
-/** 표를 못 읽어도 원고는 살린다 — 문의 표 하나 때문에 전체가 멈추면 안 된다 */
-function tryContactTable(data: Uint8Array): ContactTable | null {
+/** 표를 못 읽어도 원고는 살린다 — 표 하나 때문에 전체가 멈추면 안 된다 */
+function tryTables(data: Uint8Array): Table[] | null {
   try {
-    return contactTableOf(extractHwpxTables(data));
+    return extractHwpxTables(data);
   } catch {
     return null;
   }
@@ -794,6 +815,9 @@ export function parsePressRelease(data: Uint8Array): PressRelease {
   const vd = VIDEO_RE.exec(head);
   if (vd) r.영상 = vd[1].trim();
 
+  // 표는 한 번만 읽어 제목·문의 양쪽에 쓴다
+  const tables = isHwpx(data) ? tryTables(data) : null;
+
   const bullets = bodyIndices(paras);
   if (bullets.length) r.본문 = bullets.map((i) => paras[i]);
 
@@ -822,13 +846,60 @@ export function parsePressRelease(data: Uint8Array): PressRelease {
   }
 
   /*
+   * 글머리표(○)를 안 붙인 원고
+   *
+   * 서식대로라면 본문 문단마다 ○ 가 붙는다. 그 글자를 실마리로 제목과 본문을 갈랐다.
+   * 그런데 부서가 서식을 안 지키고 ○ 없이 쓴 원고가 실제로 들어왔다. 그러면 본문을
+   * 하나도 못 찾고 ‘보도자료 내용을 찾지 못했습니다’ 로 끝난다. 글에는 아무 문제가
+   * 없는데 도구가 거절하는 것이다. 고쳐 쓰라고 있는 도구가 읽기를 거절하면 안 된다.
+   *
+   * 글자가 없으면 **자리**를 본다. 제목·부제는 제 표에 들어 있고, 본문은 그 표와
+   * 문의 표 사이에 있다. 문의 표에서 하던 것과 같은 방법이다.
+   *
+   * 글머리표가 있는 원고는 건드리지 않는다. 김제 자료처럼 제목이 두 줄인 서식은
+   * 줄 훑기 쪽이 옳게 읽는데(쉼표로 이어 붙인다), 표는 그 둘을 제목과 부제로 갈라
+   * 놓기 때문이다. 그래서 이건 **못 읽었을 때만** 쓴다.
+   */
+  const titleLines = tables ? titleTableOf(tables) : null;
+  if (titleLines?.length) {
+    if (!r.본문.length) {
+      const same = (a: string, b: string) => squash(a) === squash(b);
+      const head = titleLines
+        .map((t) => paras.findIndex((p) => same(p, t)))
+        .filter((i) => i >= 0);
+      const from = head.length ? Math.max(...head) + 1 : 0;
+      const deptAt = paras.findIndex((p) => DEPT_LABEL_RE.test(p));
+      const to = deptAt >= 0 ? deptAt : paras.length;
+      /*
+       * 길이만 본다.
+       *
+       * 처음에 SKIP_IN_HEAD 로도 걸렀더니 본문이 여섯 문단에서 넷으로 줄었다.
+       * 그 자는 ‘담당자’ 같은 머리말 낱말을 찾는 것이라, 본문에 ‘정보업무담당자’ 가
+       * 들어 있으면 그 문단이 통째로 사라진다. 머리말 줄을 가리는 자로 본문을
+       * 재면 안 된다. 머리말은 어차피 제목 표 위에 있어 이 범위 밖이다.
+       */
+      r.본문 = paras.slice(from, to).filter((p) => p.trim().length >= 20);
+    }
+    if (!r.제목) {
+      let 제목 = titleLines[0];
+      let rest = titleLines.slice(1);
+      while (/[,，·]$/.test(제목.trim()) && rest.length) {
+        제목 = `${제목.trim()} ${rest[0].trim()}`;
+        rest = rest.slice(1);
+      }
+      r.제목 = 제목;
+      r.부제 = rest;
+    }
+  }
+
+  /*
    * 문의 표는 자리로 읽는다.
    *
    * hwpx 는 칸마다 열·줄 번호가 파일에 적혀 있으므로 그것을 그대로 쓴다. 무슨 직위가
    * 적혀 있든 상관없다. 옛 .hwp(이진 서식)에는 그 자리 정보가 없어서 문단 목록을
    * 훑는 예전 방식을 남겨 둔다 — 거기서만 직위 낱말을 본다.
    */
-  const table = isHwpx(data) ? tryContactTable(data) : null;
+  const table = tables ? contactTableOf(tables) : null;
   const contacts = table ? { 부서: '', 사람: [] } : parseContacts(paras);
   r.부서 = table?.부서 || contacts.부서;
   r.문의 = table

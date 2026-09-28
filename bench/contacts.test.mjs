@@ -14,6 +14,7 @@ import { DOMParser } from '@xmldom/xmldom';
 globalThis.DOMParser = DOMParser;
 
 const { contactTableOf, parsePressRelease, buildHwpx, EMPTY_META } = await import('./lib.mjs');
+const { unzipSync, zipSync, strToU8, strFromU8 } = await import('fflate');
 
 let bad = 0;
 const check = (name, got, want) => {
@@ -21,6 +22,23 @@ const check = (name, got, want) => {
   if (!ok) bad++;
   console.log(`  ${ok ? '✓' : '✗'} ${name} — ${got}${ok ? '' : ` (기대 ${want})`}`);
 };
+
+/**
+ * 다 만든 hwpx 에서 글머리표(○)를 떼어 낸다.
+ *
+ * 양식이 본문마다 ○ 를 붙여 주므로, 그냥 만들면 ‘글머리표 없는 원고’ 가 안 된다.
+ * 그 상태로 검사하면 통과해도 아무것도 증명하지 못한다. 실제 파일과 같은 모양을
+ * 만들려면 만든 뒤에 떼어 내야 한다.
+ */
+function 글머리표없이(bytes) {
+  const files = unzipSync(bytes);
+  const xml = strFromU8(files['Contents/section0.xml']).replace(/<hp:t>○ /g, '<hp:t>');
+  files['Contents/section0.xml'] = strToU8(xml);
+  const out = {};
+  if (files.mimetype) out.mimetype = [files.mimetype, { level: 0 }];
+  for (const n of Object.keys(files)) if (n !== 'mimetype') out[n] = [files[n], { level: 6 }];
+  return zipSync(out);
+}
 
 /** 표 칸 하나를 손으로 짓는다 (열, 줄, 가로합침, 세로합침, 글) */
 const cell = (col, row, colSpan, rowSpan, text) => ({ col, row, colSpan, rowSpan, text });
@@ -120,6 +138,33 @@ check(
   한명.paragraphs.some((p) => /김xx|이xx|박xx|063-239-3xxx|000000과/.test(p)),
   false,
 );
+
+console.log('\n글머리표(○)를 안 붙인 원고도 읽는다');
+{
+  // 정읍교육지원청 자료가 그랬다. 서식대로면 본문마다 ○ 가 붙는데 없이 써서,
+  // 본문을 하나도 못 찾고 '보도자료 내용을 찾지 못했습니다' 로 끝났다.
+  // 글에는 아무 문제가 없는데 도구가 거절한 것이다.
+  const 민글 = parsePressRelease(
+    글머리표없이(buildHwpx(
+      {
+        ...EMPTY_META,
+        배포일: '2026-09-23',
+        제목: '정읍교육지원청, AIEP 활용 교원 연수 성료',
+        부제: ['- 현장 안착 및 확산을 위한 실습 중심 워크숍 실시'],
+        부서: '교육지원과',
+        문의: [['과장', '전은영', '063-530-3003'], ['장학사', '이은철', '063-530-3034'], ['', '', '']],
+      },
+      ['본문 첫 문단입니다. 스무 글자를 넘기도록 넉넉히 적습니다.',
+       '본문 둘째 문단입니다. 이것도 스무 글자를 넘기도록 적습니다.',
+       '본문 셋째 문단입니다. 마찬가지로 넉넉한 길이로 적어 둡니다.'],
+    )),
+  );
+  check('읽어 낸다', 민글.ok, true);
+  check('제목', 민글.제목, '정읍교육지원청, AIEP 활용 교원 연수 성료');
+  check('부제', 민글.부제.join('|'), '- 현장 안착 및 확산을 위한 실습 중심 워크숍 실시');
+  check('본문 세 문단 다', 민글.본문.length, 3);
+  check('문의 표도 그대로', 민글.문의.map((r) => r[1]).join(','), '전은영,이은철');
+}
 
 console.log('\n옛 .hwp — 칸 자리가 없어 줄만 훑는다. 그래도 사람은 안 버린다');
 const { parseContacts } = await import('./lib.mjs');
