@@ -1,7 +1,10 @@
 /**
  * 같은 글을 여러 번 돌려 답이 얼마나 같은지 잰다.
  *
- *   GEMINI_API_KEY=... node bench/consistency.mjs [횟수]
+ *   OPENROUTER_API_KEY=... node bench/consistency.mjs [횟수]
+ *
+ * 상류는 배포본과 같은 길(오픈라우터)로 맞춘다. 여기서만 구글에 직통으로 물으면
+ * 잰 값이 배포본 값이 아니게 된다.
  *
  * 재는 것
  *   ① 일관성  — N 번 돌렸을 때 지적 묶음이 얼마나 겹치나 (자카드)
@@ -11,14 +14,35 @@
 import { analyze, buildRevisedParts, defaultDecisions, replacementFor, reviewWithAi, fillBlanks, verifyEdits } from './lib.mjs';
 import { CASES } from './cases.mjs';
 
-const KEY = process.env.GEMINI_API_KEY;
+const KEY = process.env.OPENROUTER_API_KEY;
 const N = Number(process.argv[2] ?? 3);
 if (!KEY) {
-  console.log('GEMINI_API_KEY 가 없어 AI 부분은 건너뜁니다.\n' +
-              'GEMINI_API_KEY=... node bench/consistency.mjs 3');
+  console.log('OPENROUTER_API_KEY 가 없어 AI 부분은 건너뜁니다.\n' +
+              'OPENROUTER_API_KEY=... node bench/consistency.mjs 3');
   process.exit(0);
 }
-const cfg = { provider: 'gemini', apiKey: KEY, model: process.env.GEMINI_MODEL ?? 'gemini-3.6-flash' };
+/*
+ * 배포본은 같은 주소의 중계를 거치지만, 여기는 노드라 중계가 없다. 그래서 오픈라우터에
+ * 바로 묻되 **몸통 모양은 배포본과 같은 OpenAI 규격**으로 맞춘다. provider 로 새는 길
+ * (data_collection)은 중계가 붙이는 것이라 여기서도 같이 붙인다.
+ */
+const cfg = {
+  provider: 'openai',
+  apiKey: KEY,
+  model: process.env.OPENROUTER_MODEL ?? 'google/gemini-3.6-flash',
+};
+const realFetch = globalThis.fetch;
+globalThis.fetch = (url, init) => {
+  if (String(url).startsWith('https://api.openai.com/v1/chat/completions')) {
+    const body = JSON.parse(init.body);
+    body.provider = { data_collection: 'deny' };
+    return realFetch('https://openrouter.ai/api/v1/chat/completions', {
+      ...init,
+      body: JSON.stringify(body),
+    });
+  }
+  return realFetch(url, init);
+};
 
 const jaccard = (a, b) => {
   const A = new Set(a), B = new Set(b);

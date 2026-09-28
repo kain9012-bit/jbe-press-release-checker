@@ -338,13 +338,18 @@ AI 가 내는 지표 이름은 **이 여덟 개 중 하나여야 한다.** 그 �
 | CORS | 없다 | 허용 주소 목록을 맞춰야 한다 |
 | 주소가 바뀌면 | 할 일 없다 | `ALLOWED_ORIGINS` 를 고쳐야 한다 |
 | 분당 제한 | 없다 | 있다 (분당 30회) |
-| 넣을 것 | `GEMINI_API_KEY`, `VITE_PROXY_URL=/api/gemini` | `wrangler secret`, 저장소 변수 `PROXY_URL` |
+| 넣을 것 | `OPENROUTER_API_KEY` (`VITE_PROXY_URL` 은 안 넣으면 `/api/ai`) | `wrangler secret`, 저장소 변수 `PROXY_URL` |
 
 **버셀에 올릴 거면 `api/` 쪽이 간단하다.** 같은 주소라 CORS 를 아예 안 만난다.
 자세한 것은 `api/README.md` 와 `proxy/README.md`.
 
-어느 쪽이든 **구글 클라우드 콘솔의 결제 상한이 마지막 안전장치다.** 문을 좁혀 두긴 했지만
+어느 쪽이든 **오픈라우터 크레딧 잔액이 마지막 안전장치다.** 문을 좁혀 두긴 했지만
 브라우저가 붙이는 표시는 브라우저 밖에서 꾸며 낼 수 있다.
+
+상류는 오픈라우터다(`api/ai/[model].js`). 부르는 모형은 그대로 `gemini-3.6-flash` 이고
+통로와 결제만 바뀌었다. 키 하나로 다른 회사 모형도 부를 수 있어, 모형을 바꿀 때 결제를
+새로 만들 일이 없다. 웹페이지는 **OpenAI 규격**으로 묻고(`messages`·`response_format`),
+중계가 `model` 을 허용 목록의 이름으로 덮어쓰며 `provider.data_collection: 'deny'` 를 붙인다.
 
 ## 하네스 — 말로 하지 말고 재기
 
@@ -352,7 +357,7 @@ AI 가 내는 지표 이름은 **이 여덟 개 중 하나여야 한다.** 그 �
 
 ```bash
 npm run bench      # 규칙 + 규약 + 중계 서버. 키가 필요 없다
-npm run bench:ai   # AI 일관성·멱등성. GEMINI_API_KEY 가 있어야 한다
+npm run bench:ai   # AI 일관성·멱등성. OPENROUTER_API_KEY 가 있어야 한다
 ```
 
 **골든 세트**(`bench/cases.mjs`)는 글마다 두 가지를 적어 둔다.

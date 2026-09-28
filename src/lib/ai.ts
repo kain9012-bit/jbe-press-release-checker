@@ -9,11 +9,13 @@ export type Provider = 'anthropic' | 'openai' | 'gemini' | 'proxy';
  *
  * 이건 비밀이 아니다. 그냥 주소다. 비밀인 API 키는 그 서버 안에만 있다.
  * 이 값이 있으면 부서 담당자는 설정을 만질 필요 없이 그냥 검토를 누르면 된다.
+ *
+ * 값이 없으면 같은 배포본 안의 /api/ai 를 쓴다. 환경변수를 깜박해도 돌아간다.
  */
-export const PROXY_URL: string = (import.meta.env?.VITE_PROXY_URL ?? '').trim();
+export const PROXY_URL: string = (import.meta.env?.VITE_PROXY_URL ?? '').trim() || '/api/ai';
 export const hasProxy = () => PROXY_URL.length > 0;
 
-/** 중계 서버가 열어 둔 모형 (worker.js 의 ALLOWED_MODELS 와 맞춘다) */
+/** 중계 서버가 열어 둔 모형 (api/ai/[model].js 의 ALLOWED_MODELS 와 맞춘다) */
 export const PROXY_MODELS = [
   'gemini-3.6-flash',
   'gemini-3.7-flash',
@@ -141,35 +143,124 @@ async function callAnthropic(cfg: AiConfig, user: string, system: string = SYSTE
   return (data.content ?? []).map((c: { text?: string }) => c.text ?? '').join('');
 }
 
-async function callOpenAI(cfg: AiConfig, user: string, system: string = SYSTEM) {
+async function callOpenAI(
+  cfg: AiConfig,
+  user: string,
+  system: string = SYSTEM,
+  schema?: unknown,
+) {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
-    body: JSON.stringify({
-      model: cfg.model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
-      temperature: 0,
-      response_format: { type: 'json_object' },
-    }),
+    body: JSON.stringify(chatBody(cfg.model, system, user, schema)),
   });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   const data = await res.json();
   return data.choices?.[0]?.message?.content ?? '';
 }
 
+/* ------------------------------------------------------------------
+   OpenAI 규격으로 물어보는 몸통
+
+   오픈라우터는 OpenAI 규격만 받는다. 제미나이 고유 형식(contents·generationConfig·
+   responseSchema)이 아니라 messages·response_format 으로 보낸다. 부르는 모형은
+   그대로 gemini-3.6-flash 이고, 통로만 바뀐 것이다.
+   ------------------------------------------------------------------ */
+
 /**
- * 제미나이를 부를 주소.
+ * 제미나이의 responseSchema 를 OpenAI 의 엄격한 json_schema 로 옮긴다.
  *
- * 중계 서버를 쓰면 키를 붙이지 않는다. 키는 그 서버 안에만 있다.
+ * 엄격 모드는 두 가지를 더 요구한다. 객체마다 additionalProperties: false 여야 하고,
+ * **모든 속성이 required 여야 한다.** 우리 스키마는 confirm.item 처럼 선택인 것이
+ * 있는데, 지시문에서 늘 적으라고 했으니 필수로 올려도 잃는 것이 없다.
+ */
+function strictSchema(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(strictSchema);
+  if (!node || typeof node !== 'object') return node;
+  const o = { ...(node as Record<string, unknown>) };
+  if (o.type === 'object' && o.properties && typeof o.properties === 'object') {
+    const props = o.properties as Record<string, unknown>;
+    o.properties = Object.fromEntries(Object.entries(props).map(([k, v]) => [k, strictSchema(v)]));
+    o.required = Object.keys(props);
+    o.additionalProperties = false;
+  } else if (o.items) {
+    o.items = strictSchema(o.items);
+  }
+  return o;
+}
+
+function chatBody(model: string, system: string, user: string, schema?: unknown) {
+  return {
+    model,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    // 온도 0. 같은 글을 두 번 넣으면 같은 답이 나와야 한다.
+    temperature: 0,
+    // 나온 뒤에 걸러 내는 것보다 애초에 그 모양만 나오게 하는 편이 낫다.
+    response_format: schema
+      ? { type: 'json_schema', json_schema: { name: 'result', strict: true, schema: strictSchema(schema) } }
+      : { type: 'json_object' },
+  };
+}
+
+/** 중계 서버 주소. 모형 이름은 주소 끝에 붙인다 — 허용 목록을 서버가 쥐고 있다. */
+export function proxyUrl(cfg: AiConfig): string {
+  return `${PROXY_URL.replace(/\/+$/, '')}/${encodeURIComponent(cfg.model)}`;
+}
+
+/**
+ * 기관 중계 서버(오픈라우터)에 묻는다.
+ *
+ * 스키마를 못 받는 모형이 섞일 수 있다. 그때는 **한 번만** 모양 지정을 빼고 다시 묻는다.
+ * JSON 으로 내라는 말은 지시문에 이미 있고, 틀린 답은 뒤의 검사관이 어차피 걸러 낸다.
+ * 여기서 통째로 실패로 떨어뜨리면 담당자는 까닭 모를 오류만 본다.
+ */
+async function callProxy(cfg: AiConfig, user: string, system: string = SYSTEM, schema?: unknown) {
+  const send = async (withSchema: boolean) =>
+    fetch(proxyUrl(cfg), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(chatBody(cfg.model, system, user, withSchema ? schema : undefined)),
+    });
+
+  let res = await send(Boolean(schema));
+  if (!res.ok && schema && (res.status === 400 || res.status === 422)) {
+    res = await send(false);
+  }
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  const data = await res.json();
+  // 오픈라우터는 상류 오류도 200 에 실어 보낼 때가 있다
+  if (data.error) throw new Error(String(data.error.message ?? data.error));
+  return data.choices?.[0]?.message?.content ?? '';
+}
+
+/**
+ * 어느 회사에 물을지는 **여기 한 곳에서만** 고른다.
+ *
+ * 전에는 부르는 자리마다 갈래를 적어 두었다(여섯 군데였다). 통로를 오픈라우터로
+ * 옮길 때 그 가운데 하나만 빠뜨려도 조용히 옛 길로 나간다. 한곳으로 모은다.
+ */
+async function ask(
+  cfg: AiConfig,
+  user: string,
+  system: string = SYSTEM,
+  schema?: unknown,
+): Promise<string> {
+  if (cfg.provider === 'proxy') return callProxy(cfg, user, system, schema);
+  if (cfg.provider === 'anthropic') return callAnthropic(cfg, user, system);
+  if (cfg.provider === 'gemini') return callGemini(cfg, user, system, schema);
+  return callOpenAI(cfg, user, system, schema);
+}
+
+/**
+ * 구글에 바로 물을 때의 주소. (중계 서버는 proxyUrl 을 쓴다)
+ *
  * 브라우저가 읽을 수 있는 것은 사람도 읽을 수 있으므로, 정적 웹페이지에 키를 둘 자리는 없다.
+ * 그래서 이 길은 자기 키를 직접 넣는 사람만 쓴다.
  */
 export function geminiUrl(cfg: AiConfig): string {
-  if (cfg.provider === 'proxy') {
-    return `${PROXY_URL.replace(/\/+$/, '')}/${encodeURIComponent(cfg.model)}`;
-  }
   return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     cfg.model,
   )}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
@@ -242,19 +333,14 @@ export async function reviewWithAi(
   rounds: number = ROUNDS,
 ): Promise<AiResult> {
   const user = buildUserPrompt(text, already);
-  const ask = async () => {
-    const raw =
-      cfg.provider === 'anthropic'
-        ? await callAnthropic(cfg, user)
-        : cfg.provider === 'gemini' || cfg.provider === 'proxy'
-          ? await callGemini(cfg, user, SYSTEM, REVIEW_SCHEMA)
-          : await callOpenAI(cfg, user);
+  const once = async () => {
+    const raw = await ask(cfg, user, SYSTEM, REVIEW_SCHEMA);
     return parseJson(raw);
   };
 
   // 한꺼번에 물어본다. 하나가 실패해도 나머지로 표를 센다.
   const settled = await Promise.allSettled(
-    Array.from({ length: Math.max(1, rounds) }, () => ask()),
+    Array.from({ length: Math.max(1, rounds) }, () => once()),
   );
   const answers = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
   if (answers.length === 0) {
@@ -410,7 +496,24 @@ export async function listModels(cfg: AiConfig): Promise<string[]> {
 export async function testModel(cfg: AiConfig): Promise<void> {
   const ping = '안녕하세요라고만 답하세요.';
 
-  if (cfg.provider === 'gemini' || cfg.provider === 'proxy') {
+  // 중계 서버는 OpenAI 규격이다. 짧게 한 번 불러 본다.
+  if (cfg.provider === 'proxy') {
+    const res = await fetch(proxyUrl(cfg), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: cfg.model,
+        messages: [{ role: 'user', content: ping }],
+        max_tokens: 16,
+      }),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const data = await res.json();
+    if (data.error) throw new Error(String(data.error.message ?? data.error));
+    return;
+  }
+
+  if (cfg.provider === 'gemini') {
     const res = await fetch(geminiUrl(cfg), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -503,12 +606,7 @@ export async function fillBlanks(
     )
     .join('\n');
 
-  const raw =
-    cfg.provider === 'anthropic'
-      ? await callAnthropic({ ...cfg }, user, FILL_SYSTEM)
-      : cfg.provider === 'openai'
-        ? await callOpenAI({ ...cfg }, user, FILL_SYSTEM)
-        : await callGemini({ ...cfg }, user, FILL_SYSTEM);
+  const raw = await ask(cfg, user, FILL_SYSTEM);
 
   const parsed = parseJson(raw);
   const out: Record<string, string> = {};
@@ -638,11 +736,7 @@ export async function verifyEdits(
     .join('\n');
 
   const raw =
-    cfg.provider === 'anthropic'
-      ? await callAnthropic(cfg, user, VERIFY_SYSTEM)
-      : cfg.provider === 'gemini' || cfg.provider === 'proxy'
-        ? await callGemini(cfg, user, VERIFY_SYSTEM, VERIFY_SCHEMA)
-        : await callOpenAI(cfg, user, VERIFY_SYSTEM);
+    await ask(cfg, user, VERIFY_SYSTEM, VERIFY_SCHEMA);
 
   const parsed = parseJson(raw);
   const from = new Map(edits.map((e) => [e.id, e.from]));
@@ -888,11 +982,7 @@ const JUDGE_ITEMS = new Set(['단락 구성', '정보 형식', '정보 배열', 
 async function askJudge(cfg: AiConfig, paras: string[]): Promise<Judged[]> {
   const user = `[보도자료 전문]\n${paras.map((p, i) => `[${i}] ${p}`).join('\n')}`;
   const raw =
-    cfg.provider === 'anthropic'
-      ? await callAnthropic(cfg, user, JUDGE_SYSTEM)
-      : cfg.provider === 'gemini' || cfg.provider === 'proxy'
-        ? await callGemini(cfg, user, JUDGE_SYSTEM, JUDGE_SCHEMA)
-        : await callOpenAI(cfg, user, JUDGE_SYSTEM);
+    await ask(cfg, user, JUDGE_SYSTEM, JUDGE_SCHEMA);
   const parsed = parseJson(raw);
   return ((parsed.judged ?? []) as Judged[])
     .filter((j) => j && JUDGE_ITEMS.has(String(j.item).trim()))
@@ -940,11 +1030,7 @@ const chunk = <T,>(xs: T[], n: number): T[][] => {
 
 async function askRewrite(cfg: AiConfig, user: string) {
   const raw =
-    cfg.provider === 'anthropic'
-      ? await callAnthropic(cfg, user, REWRITE_SYSTEM)
-      : cfg.provider === 'gemini' || cfg.provider === 'proxy'
-        ? await callGemini(cfg, user, REWRITE_SYSTEM, REWRITE_SCHEMA)
-        : await callOpenAI(cfg, user, REWRITE_SYSTEM);
+    await ask(cfg, user, REWRITE_SYSTEM, REWRITE_SCHEMA);
   return parseJson(raw);
 }
 
