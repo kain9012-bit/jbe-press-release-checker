@@ -18,6 +18,7 @@ globalThis.fetch = async (url, init) => {
   seen = {
     url: String(url),
     auth: init.headers.authorization,
+    headers: init.headers,
     body: JSON.parse(init.body),
   };
   return new Response('{"ok":1}', { status: 200, headers: { 'content-type': 'application/json' } });
@@ -113,6 +114,23 @@ check(
   (config?.maxDuration ?? 0) >= 60 && config?.runtime !== 'edge',
   true,
 );
+
+console.log('\n머리글 값은 Latin-1 만 (한글을 넣으면 fetch 가 통째로 던진다)');
+{
+  // 실제로 여기서 막혔다. 'X-Title' 에 한글을 넣었더니 상류로 나가지도 못하고
+  // fetch 가 ByteString 오류를 던졌다. 흉내 낸 fetch 는 그걸 안 따지므로
+  // 브라우저와 같은 잣대(Headers)로 한 번 더 본다.
+  await run({});
+  const bad = Object.entries(seen.headers).filter(([, v]) => /[^\u0000-\u00ff]/.test(String(v)));
+  check('Latin-1 밖 글자가 없다', bad.map(([k]) => k).join(',') || '(없음)', '(없음)');
+  let threw = '(통과)';
+  try {
+    new Headers(seen.headers);
+  } catch (e) {
+    threw = String(e.message ?? e);
+  }
+  check('진짜 Headers 가 받아 준다', threw, '(통과)');
+}
 
 console.log('\n무슨 일이 있어도 까닭을 남긴다');
 {

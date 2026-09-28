@@ -151,9 +151,15 @@ async function serve(req, res) {
       headers: {
         'content-type': 'application/json',
         authorization: `Bearer ${key}`,
-        // 오픈라우터 대시보드에서 어느 도구가 쓴 것인지 알아보라고 붙인다
+        /*
+         * 오픈라우터 대시보드에서 어느 도구가 쓴 것인지 알아보라고 붙인다.
+         * **머리글 값에 한글을 넣으면 안 된다.** HTTP 머리글은 Latin-1 만 담는다.
+         * 처음에 '보도자료 공공언어 검증' 이라고 적었다가 fetch 가 통째로 던졌다
+         * (Cannot convert argument to a ByteString … value of 48372).
+         * 하네스가 fetch 를 흉내 내고 있어 못 잡았다. 그래서 검사를 따로 뒀다.
+         */
         'HTTP-Referer': `https://${host}`,
-        'X-Title': '보도자료 공공언어 검증',
+        'X-Title': 'JBE press release checker',
       },
       body: JSON.stringify(body),
     });
